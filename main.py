@@ -8,17 +8,17 @@ from pydantic import BaseModel
 from typing import Optional, List
 import os
 
-from .database import Base, engine, get_db, SessionLocal
-from .models import (
+from database import Base, engine, get_db, SessionLocal
+from models import (
     User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint
 )
-from .auth import (
+from auth import (
     hash_password, verify_password, make_token, get_current_user, require_roles, ROLE_LABELS
 )
-from .codes import (
+from codes import (
     is_bag, is_equipment, is_user, is_cell, parse_cell, is_problem_zone, is_ean, normalize, PROBLEM_ZONE
 )
-from .seed import seed
+from seed import seed
 
 Base.metadata.create_all(bind=engine)
 db0 = SessionLocal()
