@@ -5,9 +5,8 @@ from sqlalchemy.orm import Session
 import bcrypt
 import jwt
 
-from .database import get_db
-from .models import User
-
+from database import get_db
+from models import User
 SECRET = "domovoy-prod-secret-2026"
 security = HTTPBearer()
 
