@@ -31,14 +31,10 @@ app = FastAPI(title="Домовой", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 _here = os.path.dirname(os.path.abspath(__file__))
-# try: .../backend/app -> .../frontend  OR  /app/backend/app -> /app/frontend
-FRONTEND = os.path.join(os.path.dirname(os.path.dirname(_here)), "frontend")
-if not os.path.isdir(FRONTEND):
-    FRONTEND = os.path.join(os.path.dirname(_here), "frontend")
-if not os.path.isdir(FRONTEND):
-    FRONTEND = "/app/frontend"
 
-
+# index.html и app.js находятся в корне репозитория,
+# рядом с main.py
+FRONTEND = _here
 # ---------- schemas ----------
 class LoginIn(BaseModel):
     login: str
