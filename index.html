@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0c1210" />
+  <title>Домовой</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="screen-login" class="screen active">
+    <div class="login-card">
+      <div class="brand">
+        <div class="brand-title">ДОМОВОЙ</div>
+        <p class="brand-tagline">Склад · Сумки · Оборудование</p>
+      </div>
+      <form id="login-form">
+        <label>Учётная запись</label>
+        <input id="login-id" placeholder="us000001" autocomplete="username" value="us000002" />
+        <label>Пароль</label>
+        <input id="login-pass" type="password" placeholder="••••••" value="sklad123" />
+        <button type="submit" class="btn btn-primary btn-block">Войти</button>
+      </form>
+      <div class="hints">
+        <p>us000001 / admin123 — Админ</p>
+        <p>us000002 / sklad123 — Склад</p>
+        <p>us000003 / cleaner123 — Клинер</p>
+      </div>
+      <div id="login-err" class="error hidden"></div>
+    </div>
+  </div>
+
+  <div id="screen-app" class="screen">
+    <header class="header">
+      <div class="header-brand"><span class="header-title">Домовой</span></div>
+      <div class="header-right">
+        <span id="user-label"></span>
+        <button id="btn-logout" class="btn btn-ghost btn-sm">Выйти</button>
+      </div>
+    </header>
+    <nav id="nav" class="nav"></nav>
+    <main id="content" class="content"></main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
