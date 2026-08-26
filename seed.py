@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
-from .models import User, EquipmentType, Equipment, Cell, Bag, Order, TransferPoint
-from .auth import hash_password
-
+from models import User, EquipmentType, Equipment, Cell, Bag, Order, TransferPoint
+from auth import hash_password
 
 def seed(db):
     if db.query(User).count() > 0:
