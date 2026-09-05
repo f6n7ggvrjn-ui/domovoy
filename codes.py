@@ -22,7 +22,6 @@ def is_user(code: str) -> bool:
 
 
 def parse_cell(code: str):
-    """Return dict or None. Example DY0010661/2 -> warehouse 001, region 066, shelf 1, slot 2"""
     m = RE_CELL.match((code or "").strip())
     if not m:
         return None
