@@ -116,9 +116,7 @@ async function renderPage() {
     default: return "<p>Раздел</p>";
   }
 }
-
 function afterRender() {
-  // focus scan inputs
   const inp = document.querySelector(".scan-box input");
   if (inp) inp.focus();
 }
@@ -139,40 +137,56 @@ async function renderHome() {
   }
   const orders = await api("/orders");
   return `<div class="page-h"><h1>Мои заказы</h1></div>
-    ${orders.map(o => `<div class="card"><b>${o.id}</b> · ${o.status}<br>${o.address}</div>`).join("") || "<p style='color:var(--muted)'>Нет заказов</p>"}`;
+    ${orders.map(o => `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap">
+          <b>${o.address}</b>
+          <span class="status ${o.is_late ? "status-bad" : "status-warn"}">${o.status_label}</span>
+        </div>
+        <div style="margin-top:0.4rem;font-size:0.9rem;color:var(--muted)">
+          ${o.id}${o.bag_id ? " · " + o.bag_id : ""}
+          ${o.object_info ? "<br>" + o.object_info : ""}
+        </div>
+        ${o.status === "issued" ? `<button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="reqComplete('${o.id}')">Заказ выполнен</button>` : ""}
+        ${o.status === "ready" ? `<p style="margin-top:0.5rem;color:var(--accent)">Сумка ожидает на точке передачи</p>` : ""}
+      </div>`).join("") || "<p style='color:var(--muted)'>Нет заказов</p>"}`;
 }
 
-/* ===== ASSEMBLY ===== */
-let asm = { step: 1, orderId: null, bagId: null, items: [] };
+window.reqComplete = async (id) => {
+  try {
+    const r = await api("/orders/" + id + "/request-complete", { method: "POST" });
+    toast(r.message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
 
+/* ASSEMBLY */
+let asm = {};
 async function renderAssemble() {
-  asm = { step: 1, orderId: null, bagId: null, items: [] };
+  asm = {};
   const board = await api("/assembly/board");
-  const waiting = board.filter(b => b.status === "awaiting_assembly" || b.status === "assembling");
+  const waiting = board.filter(b => ["awaiting_assembly", "assembling", "assembling_late"].includes(b.status));
   return `
-    <div class="page-h">
-      <h1>Сборка</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button>
-    </div>
+    <div class="page-h"><h1>Сборка</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div id="asm-area">
-      <p style="color:var(--muted);margin-bottom:0.75rem">Выберите заказ, затем сканируйте сумку (sumka + 5 цифр)</p>
+      <p style="color:var(--muted);margin-bottom:0.75rem">Можно собирать после Cut off — опоздание зафиксируется</p>
       ${waiting.map(o => `
         <div class="card" style="cursor:pointer" onclick="asmPickOrder('${o.order_id}')">
           <div style="display:flex;justify-content:space-between">
             <b>Заказ ${o.order_id}</b>
-            <span class="status status-warn">${o.status_label}</span>
+            <span class="status ${o.is_late ? "status-bad" : "status-warn"}">${o.status_label}</span>
           </div>
-          <div style="margin-top:0.4rem;font-size:0.9rem">${o.address || ""}</div>
-          <div class="cutoff ${o.cutoff_left != null && o.cutoff_left <= 5 ? "urgent" : ""}">
-            Cut off: ${o.cutoff_left != null ? o.cutoff_left + " мин" : (o.cutoff_minutes || 10) + " мин"}
+          <div style="margin-top:0.4rem">${o.address || ""}</div>
+          ${o.object_info ? `<div style="font-size:0.85rem;color:var(--muted)">${o.object_info}</div>` : ""}
+          <div class="cutoff ${o.cutoff_left != null && o.cutoff_left < 0 ? "urgent" : ""}">
+            Cut off: ${o.cutoff_left != null ? (o.cutoff_left < 0 ? "просрочен на " + Math.abs(o.cutoff_left) + " мин" : o.cutoff_left + " мин") : (o.cutoff_minutes || 10) + " мин"}
           </div>
-        </div>`).join("") || "<p style='color:var(--muted)'>Нет заказов в очереди</p>"}
+        </div>`).join("") || "<p style='color:var(--muted)'>Нет заказов</p>"}
     </div>`;
 }
-
 window.asmPickOrder = (orderId) => {
   asm.orderId = orderId;
-  asm.step = 2;
   document.getElementById("asm-area").innerHTML = `
     <div class="scan-info"><b>Заказ ${orderId}</b><br>Отсканируйте сумку</div>
     <div class="scan-box">
@@ -182,30 +196,29 @@ window.asmPickOrder = (orderId) => {
     </div>`;
   document.getElementById("scan-bag").focus();
 };
-
 window.asmStart = async () => {
-  const code = document.getElementById("scan-bag").value.trim();
   try {
     const r = await api("/assembly/start", {
-      method: "POST", body: JSON.stringify({ bag_id: code, order_id: asm.orderId }),
+      method: "POST", body: JSON.stringify({ bag_id: document.getElementById("scan-bag").value.trim(), order_id: asm.orderId }),
     });
     asm.bagId = r.bag_id;
-    asm.step = 3;
     toast(r.message);
     document.getElementById("asm-area").innerHTML = `
       <div class="scan-info">
-        <b>Сумка ${r.bag_id}</b> · Заказ ${r.order_id}<br>
-        ${r.address || ""}<br>
-        <span class="cutoff">Cut off: ${r.cutoff_minutes} мин</span>
+        <b>Сумка ${r.bag_id}</b> · ${r.order_id}<br>${r.address || ""}
+        ${r.object_info ? "<br>" + r.object_info : ""}
+        <br><span class="cutoff ${r.is_late ? "urgent" : ""}">
+          ${r.is_late ? "ОПОЗДАНИЕ · " + (r.late_minutes || 0) + " мин" : "Cut off: " + (r.cutoff_left != null ? r.cutoff_left : r.cutoff_minutes) + " мин"}
+        </span>
       </div>
       <div class="scan-box">
-        <div>Сканируйте оборудование (dd + 8 цифр)</div>
+        <div>Оборудование (dd + 8 цифр)</div>
         <input id="scan-eq" placeholder="dd10000001" onkeydown="if(event.key==='Enter')asmAdd()" />
         <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="asmAdd()">Добавить</button>
       </div>
       <ul class="item-list" id="asm-items"></ul>
       <div class="scan-box">
-        <div>Точка передачи (TP01 / TP02…)</div>
+        <div>Точка передачи (TP01…)</div>
         <input id="scan-tp" placeholder="TP01" list="tp-list" />
         <datalist id="tp-list"></datalist>
         <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="asmFinish()">Завершить сборку</button>
@@ -214,42 +227,43 @@ window.asmStart = async () => {
     document.getElementById("scan-eq").focus();
   } catch (e) { toast(e.message, true); }
 };
-
 window.asmAdd = async () => {
-  const code = document.getElementById("scan-eq").value.trim();
   try {
     const r = await api("/assembly/add-item", {
-      method: "POST", body: JSON.stringify({ bag_id: asm.bagId, equipment_id: code }),
+      method: "POST", body: JSON.stringify({ bag_id: asm.bagId, equipment_id: document.getElementById("scan-eq").value.trim() }),
     });
-    document.getElementById("asm-items").innerHTML = r.items.map(i =>
-      `<li><span>${i.name}</span><code>${i.id}</code></li>`).join("");
+    document.getElementById("asm-items").innerHTML = r.items.map(i => `<li><span>${i.name}</span><code>${i.id}</code></li>`).join("");
     document.getElementById("scan-eq").value = "";
     document.getElementById("scan-eq").focus();
     toast("Добавлено: " + r.name);
   } catch (e) { toast(e.message, true); }
 };
-
 window.asmFinish = async () => {
-  const tp = document.getElementById("scan-tp").value.trim();
   try {
     const r = await api("/assembly/finish", {
-      method: "POST", body: JSON.stringify({ bag_id: asm.bagId, transfer_point: tp }),
+      method: "POST", body: JSON.stringify({ bag_id: asm.bagId, transfer_point: document.getElementById("scan-tp").value.trim() }),
     });
     toast(r.message);
     page = "home"; render();
   } catch (e) { toast(e.message, true); }
 };
+window.loadTpList = async () => {
+  try {
+    const list = await api("/transfer-points");
+    const dl = document.getElementById("tp-list");
+    if (dl) dl.innerHTML = list.map(p => `<option value="${p.code}">${p.name}</option>`).join("");
+  } catch (_) {}
+};
 
-/* ===== ISSUE ===== */
+/* ISSUE */
 let iss = {};
 async function renderIssue() {
-  iss = {};
   return `
-    <div class="page-h"><h1>Выдача исполнителю</h1>
+    <div class="page-h"><h1>Выдача</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div id="iss-area">
       <div class="scan-box">
-        <div>1. QR учётной записи исполнителя (usXXXXXX)</div>
+        <div>1. QR исполнителя (usXXXXXX)</div>
         <input id="iss-user" placeholder="us000003" onkeydown="if(event.key==='Enter')issUser()" />
         <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="issUser()">Далее</button>
       </div>
@@ -260,7 +274,7 @@ window.issUser = () => {
   document.getElementById("iss-area").innerHTML = `
     <div class="scan-info">Исполнитель: <b>${iss.executor}</b></div>
     <div class="scan-box">
-      <div>2. Сумка (sumkaXXXXX)</div>
+      <div>2. Сумка</div>
       <input id="iss-bag" placeholder="sumka14024" onkeydown="if(event.key==='Enter')issGo()" />
       <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="issGo()">Выдать</button>
     </div>`;
@@ -268,49 +282,40 @@ window.issUser = () => {
 };
 window.issGo = async () => {
   try {
-    const r = await api("/issue", {
-      method: "POST",
-      body: JSON.stringify({ executor_id: iss.executor, bag_id: document.getElementById("iss-bag").value.trim() }),
-    });
-    toast(r.message);
-    page = "home"; render();
+    const r = await api("/issue", { method: "POST", body: JSON.stringify({ executor_id: iss.executor, bag_id: document.getElementById("iss-bag").value.trim() }) });
+    toast(r.message); page = "home"; render();
   } catch (e) { toast(e.message, true); }
 };
 
-/* ===== UNPACK ===== */
+/* UNPACK */
 let unp = {};
 async function renderUnpack() {
-  unp = {};
   return `
-    <div class="page-h"><h1>Разбор сумки</h1>
+    <div class="page-h"><h1>Разбор</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div id="unp-area">
       <div class="scan-box">
         <div>Сканируйте сумку</div>
         <input id="unp-bag" placeholder="sumka14024" onkeydown="if(event.key==='Enter')unpStart()" />
-        <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="unpStart()">Начать разбор</button>
+        <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="unpStart()">Начать</button>
       </div>
     </div>`;
 }
 window.unpStart = async () => {
-  const code = document.getElementById("unp-bag").value.trim();
   try {
-    const r = await api("/unpack/start", { method: "POST", body: JSON.stringify({ code }) });
-    unp.bagId = r.bag_id;
-    unp.expected = r.expected || [];
-    showUnpackUI();
-    toast(r.message);
+    const r = await api("/unpack/start", { method: "POST", body: JSON.stringify({ code: document.getElementById("unp-bag").value.trim() }) });
+    unp.bagId = r.bag_id; unp.expected = r.expected || [];
+    showUnpackUI(); toast(r.message);
   } catch (e) { toast(e.message, true); }
 };
 function showUnpackUI() {
   document.getElementById("unp-area").innerHTML = `
     <div class="scan-info"><b>Сумка ${unp.bagId}</b>
-      <ul class="item-list">${unp.expected.map(e => `<li>${e.name} <code>${e.id}</code></li>`).join("") || "<li>пусто</li>"}</ul>
+      <ul class="item-list">${(unp.expected || []).map(e => `<li>${e.name} <code>${e.id}</code></li>`).join("") || "<li>—</li>"}</ul>
     </div>
     <div class="scan-box">
-      <div>Оборудование (dd…)</div>
-      <input id="unp-eq" placeholder="dd10000001" />
-      <div style="margin-top:0.75rem">Ячейка (DY…)</div>
+      <div>Оборудование</div><input id="unp-eq" placeholder="dd10000001" />
+      <div style="margin-top:0.75rem">Ячейка</div>
       <input id="unp-cell" placeholder="DY0010661/2" onkeydown="if(event.key==='Enter')unpItem()" />
       <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="unpItem()">Разместить</button>
     </div>
@@ -320,75 +325,57 @@ function showUnpackUI() {
 }
 window.unpItem = async () => {
   try {
-    const r = await api("/unpack/item", {
-      method: "POST",
-      body: JSON.stringify({
-        bag_id: unp.bagId,
-        equipment_id: document.getElementById("unp-eq").value.trim(),
-        cell_code: document.getElementById("unp-cell").value.trim(),
-      }),
-    });
+    const r = await api("/unpack/item", { method: "POST", body: JSON.stringify({
+      bag_id: unp.bagId, equipment_id: document.getElementById("unp-eq").value.trim(),
+      cell_code: document.getElementById("unp-cell").value.trim(),
+    })});
     toast(r.message);
     unp.expected = r.remaining_items || [];
     if (r.bag_empty) {
       document.getElementById("unp-area").innerHTML = `
-        <div class="scan-info"><b>Сумка разобрана</b></div>
-        <button class="btn btn-primary btn-lg" onclick="page='home';render()">На главный экран</button>`;
-    } else {
-      showUnpackUI();
-      document.getElementById("unp-eq").value = "";
-      document.getElementById("unp-cell").value = "";
-    }
+        <div class="scan-info"><b>Сумка разобрана и свободна</b></div>
+        <button class="btn btn-primary btn-lg" onclick="page='home';render()">На главный</button>`;
+    } else { showUnpackUI(); }
   } catch (e) { toast(e.message, true); }
 };
 window.unpDamage = async () => {
   const eq = prompt("Код оборудования (dd…):");
   if (!eq) return;
-  const zone = prompt("QR зоны повреждённого:", "PROBLEMNOE_OBORUDOVANIE");
   try {
-    const r = await api("/unpack/damage", {
-      method: "POST",
-      body: JSON.stringify({ bag_id: unp.bagId, equipment_id: eq, zone_code: zone || "PROBLEMNOE_OBORUDOVANIE" }),
-    });
+    const r = await api("/unpack/damage", { method: "POST", body: JSON.stringify({
+      bag_id: unp.bagId, equipment_id: eq, zone_code: "PROBLEMNOE_OBORUDOVANIE",
+    })});
     toast(r.message);
   } catch (e) { toast(e.message, true); }
 };
 window.unpEmpty = async () => {
   try {
     const r = await api("/unpack/declare-empty", { method: "POST", body: JSON.stringify({ code: unp.bagId }) });
-    const box = document.getElementById("unp-extra");
-    if (!r.has_missing) {
-      toast("Недостач нет");
-      return;
-    }
-    box.innerHTML = `
-      <div class="card" style="margin-top:1rem">
-        <b>Не хватает:</b>
+    if (!r.has_missing) { toast("Недостач нет"); return; }
+    document.getElementById("unp-extra").innerHTML = `
+      <div class="card" style="margin-top:1rem"><b>Не хватает:</b>
         <ul class="item-list">${r.missing.map(m => `<li>${m.name} <code>${m.id}</code></li>`).join("")}</ul>
-        <button class="btn btn-danger btn-block" onclick="unpInvest()">Сумка пуста, запустить расследование</button>
+        <button class="btn btn-danger btn-block" onclick="unpInvest()">Сумка пуста, расследование</button>
       </div>`;
   } catch (e) { toast(e.message, true); }
 };
 window.unpInvest = async () => {
   try {
     const r = await api("/unpack/start-investigation", { method: "POST", body: JSON.stringify({ code: unp.bagId }) });
-    toast(r.message);
-    page = "home"; render();
+    toast(r.message); page = "home"; render();
   } catch (e) { toast(e.message, true); }
 };
 
-/* ===== RECEIVE ===== */
+/* RECEIVE */
 let rcv = {};
 async function renderReceive() {
-  rcv = {};
   return `
     <div class="page-h"><h1>Приёмка</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div id="rcv-area">
       <div class="scan-box">
-        <div>1. EAN производителя</div>
-        <input id="rcv-ean" placeholder="4601234567890" />
-        <div style="margin-top:0.75rem">2. Код единицы (dd + 8 цифр)</div>
+        <div>1. EAN</div><input id="rcv-ean" placeholder="4601234567890" />
+        <div style="margin-top:0.75rem">2. Единица (dd…)</div>
         <input id="rcv-eq" placeholder="dd20000001" onkeydown="if(event.key==='Enter')rcvAccept()" />
         <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="rcvAccept()">Принято</button>
       </div>
@@ -396,50 +383,43 @@ async function renderReceive() {
 }
 window.rcvAccept = async () => {
   try {
-    const r = await api("/receive", {
-      method: "POST",
-      body: JSON.stringify({
-        ean: document.getElementById("rcv-ean").value.trim(),
-        equipment_id: document.getElementById("rcv-eq").value.trim(),
-      }),
-    });
-    rcv.eqId = r.equipment_id;
-    toast(r.message);
+    const r = await api("/receive", { method: "POST", body: JSON.stringify({
+      ean: document.getElementById("rcv-ean").value.trim(),
+      equipment_id: document.getElementById("rcv-eq").value.trim(),
+    })});
+    rcv.eqId = r.equipment_id; toast(r.message);
     document.getElementById("rcv-area").innerHTML = `
       <div class="scan-info">${r.name} · <code>${r.equipment_id}</code></div>
       <div class="scan-box">
-        <div>Ячейка для размещения</div>
+        <div>Ячейка</div>
         <input id="rcv-cell" placeholder="DY0010661/2" onkeydown="if(event.key==='Enter')rcvPlace()" />
         <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="rcvPlace()">Разместить</button>
       </div>`;
-    document.getElementById("rcv-cell").focus();
   } catch (e) { toast(e.message, true); }
 };
 window.rcvPlace = async () => {
   try {
-    const r = await api("/receive/place", {
-      method: "POST",
-      body: JSON.stringify({ equipment_id: rcv.eqId, cell_code: document.getElementById("rcv-cell").value.trim() }),
-    });
-    toast(r.message);
-    page = "home"; render();
+    const r = await api("/receive/place", { method: "POST", body: JSON.stringify({
+      equipment_id: rcv.eqId, cell_code: document.getElementById("rcv-cell").value.trim(),
+    })});
+    toast(r.message); page = "home"; render();
   } catch (e) { toast(e.message, true); }
 };
 
-/* ===== ADMIN VIEWS ===== */
 async function renderBoard() {
   const rows = await api("/assembly/board");
   return `
-    <div class="page-h"><h1>Сбор оборудования</h1></div>
+    <div class="page-h"><h1>Очередь / статусы</h1></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Заказ</th><th>Статус</th><th>Cut off</th><th>Адрес</th></tr></thead>
+      <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Сумка</th><th>Cut off</th></tr></thead>
       <tbody>${rows.map(r => `
         <tr>
-          <td>№${r.order_id}</td>
-          <td><span class="status status-warn">${r.status_label}</span></td>
-          <td class="cutoff ${r.cutoff_left != null && r.cutoff_left <= 5 ? "urgent" : ""}">${r.cutoff_left != null ? r.cutoff_left + " мин" : "—"}</td>
-          <td>${r.address || ""}</td>
-        </tr>`).join("") || "<tr><td colspan=4>Пусто</td></tr>"}
+          <td>${r.order_id}</td>
+          <td>${r.address || ""}${r.object_info ? "<br><small>" + r.object_info + "</small>" : ""}</td>
+          <td><span class="status ${r.is_late ? "status-bad" : "status-warn"}">${r.status_label}</span></td>
+          <td>${r.bag_id || "—"}</td>
+          <td class="cutoff">${r.cutoff_left != null ? (r.cutoff_left < 0 ? "опоздание " + Math.abs(r.cutoff_left) + "м" : r.cutoff_left + "м") : "—"}</td>
+        </tr>`).join("") || "<tr><td colspan=5>Пусто</td></tr>"}
       </tbody></table></div>`;
 }
 
@@ -448,16 +428,80 @@ async function renderBags() {
   return `
     <div class="page-h"><h1>Сумки</h1></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Сумка</th><th>Статус</th><th>Заказ</th><th>Исполнитель</th></tr></thead>
+      <thead><tr><th>Сумка</th><th>Статус</th><th>Заказ</th><th>Сборщик</th><th>Исполнитель</th></tr></thead>
       <tbody>${rows.map(b => `
         <tr>
           <td><code>${b.id}</code></td>
           <td>${b.status_label}</td>
           <td>${b.order_id || "—"}</td>
+          <td>${b.assembled_by || "—"}</td>
           <td>${b.executor_id || "—"}</td>
         </tr>`).join("")}
       </tbody></table></div>`;
 }
+
+async function renderOrdersAdmin() {
+  const orders = await api("/orders");
+  const emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman");
+  return `
+    <div class="page-h"><h1>Заказы</h1></div>
+    <div class="card">
+      <div class="card-title">Новый заказ</div>
+      <label>Клиент</label><input id="ord-client" />
+      <label>Адрес *</label><input id="ord-addr" placeholder="ул. Ленина, 7" />
+      <label>Информация по объекту</label><input id="ord-info" placeholder="домофон, этаж, парковка…" />
+      <label>Тип уборки</label><input id="ord-type" />
+      <label>Исполнитель</label>
+      <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>
+      <label>Cut off</label>
+      <select id="ord-cut"><option value="10">10</option><option value="15">15</option><option value="20">20</option><option value="30">30</option></select>
+      <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
+    </div>
+    <div class="table-wrap" style="margin-top:1rem"><table>
+      <thead><tr><th>Заказ / адрес</th><th>Сумка</th><th>Статус</th><th>Исполнитель</th><th></th></tr></thead>
+      <tbody>${orders.map(o => `
+        <tr>
+          <td><b>${o.address}</b><br><small>${o.id}${o.is_late ? " · опоздание " + (o.late_minutes || "") + "м" : ""}</small>
+            ${o.object_info ? "<br><small>" + o.object_info + "</small>" : ""}</td>
+          <td>${o.bag_id || "—"}</td>
+          <td><span class="status ${o.status === "done" ? "status-ok" : o.is_late ? "status-bad" : "status-warn"}">${o.status_label}</span></td>
+          <td>${o.executor_id || "—"}</td>
+          <td style="white-space:nowrap">
+            ${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
+            ${o.status === "completion_pending" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
+            ${!["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить</button>` : ""}
+          </td>
+        </tr>`).join("")}
+      </tbody></table></div>`;
+}
+window.ordCreate = async (send) => {
+  try {
+    const r = await api("/orders", { method: "POST", body: JSON.stringify({
+      client_name: document.getElementById("ord-client").value.trim() || null,
+      address: document.getElementById("ord-addr").value.trim(),
+      object_info: document.getElementById("ord-info").value.trim() || null,
+      cleaning_type: document.getElementById("ord-type").value.trim() || null,
+      executor_id: document.getElementById("ord-exec").value || null,
+      cutoff_minutes: parseInt(document.getElementById("ord-cut").value, 10),
+      send_to_assembly: send,
+    })});
+    toast(r.message); if (r.signal) playBeep(); render();
+  } catch (e) { toast(e.message, true); }
+};
+window.ordSend = async (id) => {
+  try { toast((await api("/orders/" + id + "/send-to-assembly", { method: "POST" })).message); playBeep(); render(); }
+  catch (e) { toast(e.message, true); }
+};
+window.ordConfirm = async (id) => {
+  try { toast((await api("/orders/" + id + "/confirm-complete", { method: "POST" })).message); render(); }
+  catch (e) { toast(e.message, true); }
+};
+window.ordReassign = async (id) => {
+  const eid = prompt("ID нового исполнителя (us000003):");
+  if (!eid) return;
+  try { toast((await api("/orders/" + id + "/reassign", { method: "POST", body: JSON.stringify({ executor_id: eid }) })).message); render(); }
+  catch (e) { toast(e.message, true); }
+};
 
 async function renderEmployees() {
   const list = await api("/employees");
@@ -466,12 +510,10 @@ async function renderEmployees() {
     <div class="page-h"><h1>Сотрудники</h1></div>
     <div class="card">
       <div class="card-title">Быстрое добавление</div>
-      <label>Учётная запись (свободна)</label>
-      <input id="emp-id" value="${next.id}" readonly />
-      <label>ФИО</label>
-      <input id="emp-name" placeholder="Иванов Иван Иванович" />
-      <label>Дата рождения</label>
-      <input id="emp-bd" type="date" />
+      <label>Учётная запись</label><input id="emp-id" value="${next.id}" readonly />
+      <label>ФИО</label><input id="emp-name" />
+      <label>Дата рождения</label><input id="emp-bd" type="date" />
+      <label>Пароль для входа</label><input id="emp-pass" type="text" placeholder="минимум 4 символа" />
       <label>Роль</label>
       <select id="emp-role">
         <option value="warehouse">Сотрудник склада</option>
@@ -481,23 +523,44 @@ async function renderEmployees() {
       <button class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
     </div>
     <div class="table-wrap" style="margin-top:1rem"><table>
-      <thead><tr><th>ID</th><th>ФИО</th><th>Роль</th><th>Статус</th></tr></thead>
-      <tbody>${list.map(u => `<tr><td>${u.id}</td><td>${u.full_name}</td><td>${u.role_label}</td><td>${u.status}</td></tr>`).join("")}
+      <thead><tr><th>ID</th><th>ФИО</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
+      <tbody>${list.map(u => `
+        <tr>
+          <td>${u.id}</td><td>${u.full_name}</td><td>${u.role_label}</td><td>${u.status}</td>
+          <td>
+            ${u.role !== "admin" ? `<button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${u.full_name}')">Изменить</button>
+            <button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Удалить</button>` : ""}
+          </td>
+        </tr>`).join("")}
       </tbody></table></div>`;
 }
 window.empSave = async () => {
   try {
-    const r = await api("/employees", {
-      method: "POST",
-      body: JSON.stringify({
-        full_name: document.getElementById("emp-name").value.trim(),
-        birth_date: document.getElementById("emp-bd").value || null,
-        role: document.getElementById("emp-role").value,
-      }),
-    });
+    const r = await api("/employees", { method: "POST", body: JSON.stringify({
+      full_name: document.getElementById("emp-name").value.trim(),
+      birth_date: document.getElementById("emp-bd").value || null,
+      role: document.getElementById("emp-role").value,
+      password: document.getElementById("emp-pass").value.trim() || null,
+    })});
     toast(`Создан ${r.id}, пароль: ${r.password}`);
     render();
   } catch (e) { toast(e.message, true); }
+};
+window.empEdit = async (id, name) => {
+  const nn = prompt("ФИО:", name);
+  if (nn === null) return;
+  const pwd = prompt("Новый пароль (пусто = не менять):");
+  try {
+    await api("/employees/" + id, { method: "PATCH", body: JSON.stringify({
+      full_name: nn, password: pwd || null,
+    })});
+    toast("Сохранено"); render();
+  } catch (e) { toast(e.message, true); }
+};
+window.empDel = async (id) => {
+  if (!confirm("Отключить " + id + "?")) return;
+  try { await api("/employees/" + id, { method: "DELETE" }); toast("Отключён"); render(); }
+  catch (e) { toast(e.message, true); }
 };
 
 async function renderCells() {
@@ -506,144 +569,96 @@ async function renderCells() {
     <div class="page-h"><h1>Ячейки</h1></div>
     ${user.role === "admin" ? `
     <div class="card">
-      <label>Код ячейки</label>
-      <input id="cell-code" placeholder="DY0010661/2" />
+      <label>Код ячейки</label><input id="cell-code" placeholder="DY0010661/2" />
       <button class="btn btn-primary btn-block" onclick="cellAdd()">Добавить</button>
     </div>` : ""}
-    <div class="table-wrap"><table>
-      <thead><tr><th>Код</th><th>Склад</th><th>Регион</th><th>Полка</th><th>Ячейка</th></tr></thead>
-      <tbody>${list.map(c => `<tr><td>${c.code}</td><td>${c.warehouse_no}</td><td>${c.region}</td><td>${c.shelf}</td><td>${c.slot}</td></tr>`).join("")}
-      </tbody></table></div>`;
+    ${list.map(c => `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between">
+          <b>${c.code}</b>
+          <span>${c.count} ед.</span>
+        </div>
+        <div style="font-size:0.85rem;color:var(--muted)">Склад ${c.warehouse_no} · регион ${c.region} · полка ${c.shelf}/${c.slot}</div>
+        <ul class="item-list">${(c.items || []).map(i => `<li>${i.name} <code>${i.id}</code></li>`).join("") || "<li>пусто</li>"}</ul>
+        ${user.role === "admin" ? `<button class="btn btn-danger btn-sm" onclick="cellDel('${c.code}')">Удалить ячейку</button>` : ""}
+      </div>`).join("")}`;
 }
 window.cellAdd = async () => {
-  try {
-    const r = await api("/cells", { method: "POST", body: JSON.stringify({ code: document.getElementById("cell-code").value.trim() }) });
-    toast("Ячейка " + r.code);
-    render();
-  } catch (e) { toast(e.message, true); }
+  try { toast("Ячейка " + (await api("/cells", { method: "POST", body: JSON.stringify({ code: document.getElementById("cell-code").value.trim() }) })).code); render(); }
+  catch (e) { toast(e.message, true); }
+};
+window.cellDel = async (code) => {
+  if (!confirm("Удалить " + code + "?")) return;
+  try { await api("/cells/" + encodeURIComponent(code), { method: "DELETE" }); toast("Удалено"); render(); }
+  catch (e) { toast(e.message, true); }
 };
 
 async function renderMissing() {
   const rows = await api("/missing");
   return `
-    <div class="page-h"><h1>Пропажи</h1></div>
+    <div class="page-h"><h1>Пропажи и повреждения</h1></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Оборудование</th><th>Сумка</th><th>Последние 2 пользователя</th><th>Кто сообщил</th></tr></thead>
+      <thead><tr><th>Оборудование</th><th>Тип</th><th>Последние 2</th><th></th></tr></thead>
       <tbody>${rows.map(r => `
         <tr>
           <td>${r.name}<br><code>${r.equipment_id}</code></td>
-          <td>${r.bag_id || "—"}</td>
+          <td>${r.kind === "damaged" ? "Повреждение" : "Пропажа"}</td>
           <td>${r.last_user_1 || "—"} / ${r.last_user_2 || "—"}</td>
-          <td>${r.reported_by}</td>
-        </tr>`).join("") || "<tr><td colspan=4>Нет открытых пропаж</td></tr>"}
+          <td>
+            <button class="btn btn-danger btn-sm" onclick="missOff(${r.id})">Списать</button>
+            <button class="btn btn-accent btn-sm" onclick="missRest(${r.id})">Вернуть</button>
+          </td>
+        </tr>`).join("") || "<tr><td colspan=4>Нет открытых</td></tr>"}
       </tbody></table></div>`;
 }
+window.missOff = async (id) => {
+  if (!confirm("Списать?")) return;
+  try { toast((await api("/missing/write-off", { method: "POST", body: JSON.stringify({ report_id: id }) })).message); render(); }
+  catch (e) { toast(e.message, true); }
+};
+window.missRest = async (id) => {
+  const cell = prompt("Ячейка для возврата:", "DY0010661/2");
+  if (!cell) return;
+  try { toast((await api("/missing/restore", { method: "POST", body: JSON.stringify({ report_id: id, cell_code: cell }) })).message); render(); }
+  catch (e) { toast(e.message, true); }
+};
 
 async function renderEans() {
   const list = await api("/equipment-types");
   return `
-    <div class="page-h"><h1>EAN (типы)</h1></div>
+    <div class="page-h"><h1>EAN</h1></div>
     <div class="card">
-      <label>EAN</label><input id="ean-code" placeholder="4601234567890" />
-      <label>Название</label><input id="ean-name" placeholder="Пылесос Karcher" />
+      <label>EAN</label><input id="ean-code" />
+      <label>Название</label><input id="ean-name" />
       <button class="btn btn-primary btn-block" onclick="eanAdd()">Добавить</button>
     </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>EAN</th><th>Название</th></tr></thead>
-      <tbody>${list.map(t => `<tr><td>${t.ean}</td><td>${t.name}</td></tr>`).join("")}
-      </tbody></table></div>`;
+    ${list.map(t => `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between">
+          <div><b>${t.name}</b><br><code>${t.ean}</code></div>
+          <div><b>${t.count}</b> ед.</div>
+        </div>
+        <details style="margin-top:0.5rem">
+          <summary>Посмотреть ячейки</summary>
+          <ul class="item-list">${Object.entries(t.cells || {}).map(([cell, items]) =>
+            `<li><b>${cell}</b>: ${items.map(i => i.id).join(", ")}</li>`).join("") || "<li>нет</li>"}</ul>
+        </details>
+        <button class="btn btn-danger btn-sm" style="margin-top:0.5rem" onclick="eanDel('${t.ean}')">Удалить EAN</button>
+      </div>`).join("")}`;
 }
 window.eanAdd = async () => {
   try {
-    await api("/equipment-types", {
-      method: "POST",
-      body: JSON.stringify({ ean: document.getElementById("ean-code").value.trim(), name: document.getElementById("ean-name").value.trim() }),
-    });
-    toast("EAN добавлен");
-    render();
+    await api("/equipment-types", { method: "POST", body: JSON.stringify({
+      ean: document.getElementById("ean-code").value.trim(),
+      name: document.getElementById("ean-name").value.trim(),
+    })});
+    toast("Добавлено"); render();
   } catch (e) { toast(e.message, true); }
 };
-
-if (token && user) {
-  api("/me").then(u => { user = u; sessionStorage.setItem("dv_user", JSON.stringify(u)); show("app"); startSignalPoll(); }).catch(logout);
-} else {
-  show("login");
-}
-
-
-window.loadTpList = async () => {
-  try {
-    const list = await api("/transfer-points");
-    const dl = document.getElementById("tp-list");
-    if (dl) dl.innerHTML = list.map(p => `<option value="${p.code}">${p.name}</option>`).join("");
-  } catch (_) {}
-};
-
-async function renderOrdersAdmin() {
-  const orders = await api("/orders");
-  const emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman");
-  return `
-    <div class="page-h"><h1>Заказы</h1></div>
-    <div class="card">
-      <div class="card-title">Новый заказ → на сборку</div>
-      <label>Клиент</label>
-      <input id="ord-client" placeholder="ООО Ромашка" />
-      <label>Адрес объекта *</label>
-      <input id="ord-addr" placeholder="г. Москва, ул. …" />
-      <label>Тип уборки</label>
-      <input id="ord-type" placeholder="Генеральная / Поддерживающая" />
-      <label>Исполнитель</label>
-      <select id="ord-exec">
-        <option value="">— не назначен —</option>
-        ${emps.map(e => `<option value="${e.id}">${e.full_name} (${e.id})</option>`).join("")}
-      </select>
-      <label>Cut off (мин)</label>
-      <select id="ord-cut">
-        <option value="10">10</option>
-        <option value="15">15</option>
-        <option value="20">20</option>
-        <option value="30">30</option>
-      </select>
-      <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
-      <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="ordCreate(false)">Только создать</button>
-    </div>
-    <div class="table-wrap" style="margin-top:1rem"><table>
-      <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Cut off</th><th></th></tr></thead>
-      <tbody>${orders.map(o => `
-        <tr>
-          <td>${o.id}</td>
-          <td>${o.address}</td>
-          <td>${o.status}</td>
-          <td>${o.cutoff_minutes} мин</td>
-          <td>${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}</td>
-        </tr>`).join("")}
-      </tbody></table></div>`;
-}
-window.ordCreate = async (send) => {
-  try {
-    const r = await api("/orders", {
-      method: "POST",
-      body: JSON.stringify({
-        client_name: document.getElementById("ord-client").value.trim() || null,
-        address: document.getElementById("ord-addr").value.trim(),
-        cleaning_type: document.getElementById("ord-type").value.trim() || null,
-        executor_id: document.getElementById("ord-exec").value || null,
-        cutoff_minutes: parseInt(document.getElementById("ord-cut").value, 10),
-        send_to_assembly: send,
-      }),
-    });
-    toast(r.message);
-    if (r.signal) playBeep();
-    render();
-  } catch (e) { toast(e.message, true); }
-};
-window.ordSend = async (id) => {
-  try {
-    const r = await api("/orders/" + id + "/send-to-assembly", { method: "POST" });
-    toast(r.message);
-    playBeep();
-    render();
-  } catch (e) { toast(e.message, true); }
+window.eanDel = async (ean) => {
+  if (!confirm("Удалить EAN " + ean + "?")) return;
+  try { await api("/equipment-types/" + encodeURIComponent(ean), { method: "DELETE" }); toast("Удалено"); render(); }
+  catch (e) { toast(e.message, true); }
 };
 
 async function renderPoints() {
@@ -651,29 +666,38 @@ async function renderPoints() {
   return `
     <div class="page-h"><h1>Точки передачи</h1></div>
     <div class="card">
-      <label>Код (TP01)</label>
-      <input id="tp-code" placeholder="TP04" />
-      <label>Название</label>
-      <input id="tp-name" placeholder="У лифта / Стеллаж 5" />
+      <label>Код</label><input id="tp-code" placeholder="TP04" />
+      <label>Название</label><input id="tp-name" />
       <button class="btn btn-primary btn-block" onclick="tpAdd()">Добавить</button>
     </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Код</th><th>Название</th></tr></thead>
-      <tbody>${list.map(p => `<tr><td><code>${p.code}</code></td><td>${p.name}</td></tr>`).join("")}
-      </tbody></table></div>`;
+    ${list.map(p => `
+      <div class="card" style="display:flex;justify-content:space-between;align-items:center">
+        <div><code>${p.code}</code> — ${p.name}</div>
+        <div>
+          <button class="btn btn-ghost btn-sm" onclick="tpEdit('${p.code}','${p.name.replace(/'/g, "")}')">Изменить</button>
+          <button class="btn btn-danger btn-sm" onclick="tpDel('${p.code}')">Удалить</button>
+        </div>
+      </div>`).join("")}`;
 }
 window.tpAdd = async () => {
   try {
-    await api("/transfer-points", {
-      method: "POST",
-      body: JSON.stringify({
-        code: document.getElementById("tp-code").value.trim(),
-        name: document.getElementById("tp-name").value.trim(),
-      }),
-    });
-    toast("Точка добавлена");
-    render();
+    await api("/transfer-points", { method: "POST", body: JSON.stringify({
+      code: document.getElementById("tp-code").value.trim(),
+      name: document.getElementById("tp-name").value.trim(),
+    })});
+    toast("Добавлено"); render();
   } catch (e) { toast(e.message, true); }
+};
+window.tpEdit = async (code, name) => {
+  const n = prompt("Название:", name);
+  if (n === null) return;
+  try { await api("/transfer-points/" + code, { method: "PATCH", body: JSON.stringify({ name: n }) }); toast("Сохранено"); render(); }
+  catch (e) { toast(e.message, true); }
+};
+window.tpDel = async (code) => {
+  if (!confirm("Удалить " + code + "?")) return;
+  try { await api("/transfer-points/" + code, { method: "DELETE" }); toast("Удалено"); render(); }
+  catch (e) { toast(e.message, true); }
 };
 
 async function renderReturnBag() {
@@ -681,47 +705,27 @@ async function renderReturnBag() {
     <div class="page-h"><h1>Возврат сумки</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div class="scan-box">
-      <div>Сканируйте сумку от исполнителя</div>
+      <div>Сканируйте сумку</div>
       <input id="ret-bag" placeholder="sumka14024" onkeydown="if(event.key==='Enter')doReturnBag()" />
       <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="doReturnBag()">Принять на разбор</button>
     </div>`;
 }
 window.doReturnBag = async () => {
   try {
-    const r = await api("/bags/return", {
-      method: "POST",
-      body: JSON.stringify({ bag_id: document.getElementById("ret-bag").value.trim() }),
-    });
-    toast(r.message);
-    page = "unpack";
-    render();
+    const r = await api("/bags/return", { method: "POST", body: JSON.stringify({ bag_id: document.getElementById("ret-bag").value.trim() }) });
+    toast(r.message); page = "unpack"; render();
   } catch (e) { toast(e.message, true); }
 };
 
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    o.frequency.value = 880;
-    g.gain.value = 0.15;
-    o.start();
-    setTimeout(() => { o.stop(); ctx.close(); }, 200);
-    setTimeout(() => {
-      const ctx2 = new (window.AudioContext || window.webkitAudioContext)();
-      const o2 = ctx2.createOscillator();
-      const g2 = ctx2.createGain();
-      o2.connect(g2); g2.connect(ctx2.destination);
-      o2.frequency.value = 1200;
-      g2.gain.value = 0.15;
-      o2.start();
-      setTimeout(() => { o2.stop(); ctx2.close(); }, 250);
-    }, 250);
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination); o.frequency.value = 880; g.gain.value = 0.15;
+    o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 200);
   } catch (_) {}
 }
 
-// Poll signals on warehouse home
 let signalTimer = null;
 function startSignalPoll() {
   if (signalTimer) clearInterval(signalTimer);
@@ -734,16 +738,16 @@ function startSignalPoll() {
         if (!known.has(s.order_id)) {
           known.add(s.order_id);
           playBeep();
-          if (page === "home" || page === "board" || page === "assemble") {
-            const el = document.getElementById("signal-banner");
-            if (el) {
-              el.style.display = "block";
-              el.textContent = `🔔 Новый заказ на сборку: ${s.order_id}`;
-            }
-          }
+          const el = document.getElementById("signal-banner");
+          if (el) { el.style.display = "block"; el.textContent = "Новый заказ: " + s.order_id; }
         }
       }
     } catch (_) {}
   }, 8000);
 }
 
+if (token && user) {
+  api("/me").then(u => { user = u; sessionStorage.setItem("dv_user", JSON.stringify(u)); show("app"); startSignalPoll(); }).catch(logout);
+} else {
+  show("login");
+}
