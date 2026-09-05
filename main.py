@@ -628,10 +628,28 @@ def declare_empty(data: ScanIn, db: Session = Depends(get_db), user: User = Depe
     if not bag:
         raise HTTPException(404, "Сумка не найдена")
     missing = db.query(Equipment).filter(Equipment.bag_id == bag.id).all()
+    if not missing and bag.status in ("awaiting_unpack", "in_use", "assembling"):
+        bag.status = "free"
+        bag.order_id = None
+        bag.executor_id = None
+        bag.transfer_point = None
+        bag.assembled_by = None
+        bag.assembly_started_at = None
+        bag.assembly_finished_at = None
+        log_op(db, "bag_free", user.id, bag_id=bag.id, comment="no missing after unpack")
+        db.commit()
+        return {
+            "bag_id": bag.id,
+            "missing": [],
+            "has_missing": False,
+            "bag_freed": True,
+            "message": "Недостач нет. Сумка свободна",
+        }
     return {
         "bag_id": bag.id,
         "missing": [{"id": e.id, "name": e.name, "last_user_1": e.last_user_1, "last_user_2": e.last_user_2} for e in missing],
         "has_missing": len(missing) > 0,
+        "bag_freed": False,
     }
 
 @app.post("/api/unpack/start-investigation")
@@ -961,6 +979,27 @@ def return_bag(data: ReturnBagIn, db: Session = Depends(get_db), user: User = De
     db.commit()
     return {"ok": True, "message": f"Сумка {bag.id} ждёт разбор", "status": "awaiting_unpack"}
 
+
+@app.post("/api/bags/{bag_id}/force-free")
+def force_free_bag(bag_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    bag_id = normalize(bag_id).lower()
+    bag = db.query(Bag).filter(Bag.id == bag_id).first()
+    if not bag:
+        raise HTTPException(404, "Сумка не найдена")
+    left = db.query(Equipment).filter(Equipment.bag_id == bag.id).count()
+    if left:
+        raise HTTPException(400, f"В сумке ещё {left} ед. Сначала разбор или расследование")
+    bag.status = "free"
+    bag.order_id = None
+    bag.executor_id = None
+    bag.transfer_point = None
+    bag.assembled_by = None
+    bag.assembly_started_at = None
+    bag.assembly_finished_at = None
+    log_op(db, "bag_force_free", user.id, bag_id=bag.id)
+    db.commit()
+    return {"ok": True, "message": f"Сумка {bag.id} свободна"}
+
 @app.get("/api/tsd/signals")
 def tsd_signals(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse"))):
     orders = db.query(Order).filter(Order.status == "awaiting_assembly", Order.signal_sent == True).order_by(Order.created_at.desc()).limit(20).all()
@@ -972,6 +1011,221 @@ def list_equipment(db: Session = Depends(get_db), user: User = Depends(require_r
     return [{"id": e.id, "name": e.name, "status": e.status, "cell_code": e.cell_code,
              "bag_id": e.bag_id, "ean": e.ean, "last_user_1": e.last_user_1, "last_user_2": e.last_user_2}
             for e in db.query(Equipment).order_by(Equipment.id).all()]
+
+
+@app.get("/api/lookup")
+def lookup(code: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Универсальная информация по объекту (как в Ozon WMS): что это и где сейчас."""
+    raw = normalize(code)
+    c = raw.lower()
+    result = {"code": raw, "kind": None, "title": None, "location": None, "status": None, "details": {}}
+
+    # --- bag ---
+    if is_bag(c):
+        bag = db.query(Bag).filter(Bag.id == c).first()
+        if not bag:
+            raise HTTPException(404, "Сумка не найдена в системе")
+        labels = {
+            "free": "Свободна", "assembling": "Собирается", "at_transfer": "На точке передачи",
+            "in_use": "У исполнителя", "awaiting_unpack": "Ждёт разбор",
+        }
+        items = db.query(Equipment).filter(Equipment.bag_id == bag.id).all()
+        order = db.query(Order).filter(Order.id == bag.order_id).first() if bag.order_id else None
+        loc_parts = []
+        if bag.status == "free":
+            loc_parts.append("на складе (свободна)")
+        elif bag.status == "assembling":
+            loc_parts.append(f"сборка, сборщик {bag.assembled_by or '—'}")
+        elif bag.status == "at_transfer":
+            loc_parts.append(f"точка передачи: {bag.transfer_point or '—'}")
+        elif bag.status == "in_use":
+            ex = db.query(User).filter(User.id == bag.executor_id).first() if bag.executor_id else None
+            loc_parts.append(f"у исполнителя {bag.executor_id or '—'}" + (f" ({ex.full_name})" if ex else ""))
+        elif bag.status == "awaiting_unpack":
+            loc_parts.append("принята, ждёт разбор на складе")
+        result.update({
+            "kind": "bag",
+            "title": f"Сумка {bag.id}",
+            "status": labels.get(bag.status, bag.status),
+            "location": "; ".join(loc_parts) if loc_parts else bag.status,
+            "details": {
+                "order_id": bag.order_id,
+                "address": order.address if order else None,
+                "object_info": order.object_info if order else None,
+                "executor_id": bag.executor_id,
+                "assembled_by": bag.assembled_by,
+                "transfer_point": bag.transfer_point,
+                "items_count": len(items),
+                "items": [{"id": e.id, "name": e.name, "status": e.status} for e in items],
+            },
+        })
+        return result
+
+    # --- equipment unit ---
+    if is_equipment(c):
+        eq = db.query(Equipment).filter(Equipment.id == c).first()
+        if not eq:
+            raise HTTPException(404, "Оборудование не найдено")
+        status_labels = {
+            "in_cell": "В ячейке", "in_bag": "В сумке", "issued": "Выдано исполнителю",
+            "damaged": "Повреждено", "missing": "Пропажа", "receiving": "Приёмка",
+            "written_off": "Списано",
+        }
+        loc = None
+        if eq.status == "in_cell" and eq.cell_code:
+            loc = f"ячейка {eq.cell_code}"
+        elif eq.bag_id:
+            bag = db.query(Bag).filter(Bag.id == eq.bag_id).first()
+            if bag and bag.status == "in_use" and bag.executor_id:
+                loc = f"сумка {eq.bag_id} у исполнителя {bag.executor_id}"
+            elif bag and bag.status == "at_transfer":
+                loc = f"сумка {eq.bag_id} на точке {bag.transfer_point or 'передачи'}"
+            elif bag and bag.status == "assembling":
+                loc = f"сумка {eq.bag_id} (сборка, {bag.assembled_by or '—'})"
+            elif bag and bag.status == "awaiting_unpack":
+                loc = f"сумка {eq.bag_id} (ждёт разбор)"
+            else:
+                loc = f"сумка {eq.bag_id}"
+        elif eq.status == "damaged":
+            loc = f"зона повреждений ({eq.cell_code or 'PROBLEMNOE_OBORUDOVANIE'})"
+        elif eq.status == "missing":
+            loc = "пропажа (см. раздел Пропажи)"
+        elif eq.status == "written_off":
+            loc = "списано с учёта"
+        result.update({
+            "kind": "equipment",
+            "title": eq.name or eq.id,
+            "status": status_labels.get(eq.status, eq.status),
+            "location": loc or eq.status,
+            "details": {
+                "id": eq.id,
+                "ean": eq.ean,
+                "cell_code": eq.cell_code,
+                "bag_id": eq.bag_id,
+                "last_user_1": eq.last_user_1,
+                "last_user_2": eq.last_user_2,
+            },
+        })
+        return result
+
+    # --- cell ---
+    if is_cell(raw) or is_cell(c.upper() if c.startswith("dy") else raw):
+        code = raw if is_cell(raw) else ("DY" + raw[2:] if raw[:2].lower() == "dy" else raw)
+        # try normalized
+        parsed = parse_cell(raw)
+        cell_code = None
+        if parsed:
+            # find exact
+            for cell in db.query(Cell).all():
+                if cell.code.upper() == raw.upper() or cell.code == parsed.get("code"):
+                    cell_code = cell.code
+                    break
+            if not cell_code:
+                cell_code = raw.upper().replace("DY", "DY") if raw.upper().startswith("DY") else raw
+        else:
+            cell_code = raw
+        cell = db.query(Cell).filter(Cell.code == cell_code).first()
+        if not cell:
+            # try case-insensitive
+            cell = db.query(Cell).filter(Cell.code.ilike(cell_code)).first()
+        if not cell:
+            raise HTTPException(404, "Ячейка не найдена")
+        items = db.query(Equipment).filter(Equipment.cell_code == cell.code, Equipment.status == "in_cell").all()
+        result.update({
+            "kind": "cell",
+            "title": f"Ячейка {cell.code}",
+            "status": f"{len(items)} ед. на месте",
+            "location": f"склад {cell.warehouse_no}, регион {cell.region}, полка {cell.shelf}/{cell.slot}",
+            "details": {
+                "code": cell.code,
+                "items": [{"id": e.id, "name": e.name, "ean": e.ean} for e in items],
+            },
+        })
+        return result
+
+    # --- user ---
+    if is_user(c):
+        u = db.query(User).filter(User.id == c).first()
+        if not u:
+            raise HTTPException(404, "Сотрудник не найден")
+        bags = db.query(Bag).filter(Bag.executor_id == u.id, Bag.status == "in_use").all()
+        result.update({
+            "kind": "user",
+            "title": u.full_name,
+            "status": ROLE_LABELS.get(u.role, u.role) + f" · {u.status}",
+            "location": f"учётная запись {u.id}",
+            "details": {
+                "id": u.id,
+                "role": u.role,
+                "bags_in_use": [{"id": b.id, "order_id": b.order_id} for b in bags],
+            },
+        })
+        return result
+
+    # --- EAN / equipment type ---
+    if is_ean(raw) or db.query(EquipmentType).filter(EquipmentType.ean == raw).first():
+        trow = db.query(EquipmentType).filter(EquipmentType.ean == raw).first()
+        if not trow:
+            raise HTTPException(404, "EAN не найден")
+        units = db.query(Equipment).filter(Equipment.ean == trow.ean, Equipment.status != "written_off").all()
+        by_loc = {}
+        for e in units:
+            key = e.cell_code or (f"сумка {e.bag_id}" if e.bag_id else e.status)
+            by_loc.setdefault(key, []).append(e.id)
+        result.update({
+            "kind": "ean",
+            "title": trow.name,
+            "status": f"{len(units)} ед. на учёте",
+            "location": "см. размещение по ячейкам/сумкам",
+            "details": {
+                "ean": trow.ean,
+                "category": trow.category,
+                "placement": {k: v for k, v in by_loc.items()},
+            },
+        })
+        return result
+
+    # --- transfer point ---
+    cu = raw.upper()
+    tp = db.query(TransferPoint).filter(TransferPoint.code == cu).first()
+    if tp:
+        bags = db.query(Bag).filter(Bag.status == "at_transfer", Bag.transfer_point.contains(tp.code)).all()
+        result.update({
+            "kind": "transfer_point",
+            "title": f"{tp.code} — {tp.name}",
+            "status": f"сумок на точке: {len(bags)}",
+            "location": tp.name,
+            "details": {"bags": [b.id for b in bags]},
+        })
+        return result
+
+    # --- order ---
+    if c.upper().startswith("ORD") or c.startswith("ord"):
+        oid = raw.upper() if raw.upper().startswith("ORD") else raw
+        order = db.query(Order).filter(Order.id == oid).first()
+        if not order:
+            order = db.query(Order).filter(Order.id.ilike(oid)).first()
+        if order:
+            bag = db.query(Bag).filter(Bag.id == order.bag_id).first() if order.bag_id else None
+            result.update({
+                "kind": "order",
+                "title": order.address,
+                "status": ORDER_LABELS.get(order.status, order.status),
+                "location": (f"сумка {order.bag_id}" if order.bag_id else "сумка не назначена")
+                    + (f", исполнитель {order.executor_id}" if order.executor_id else ""),
+                "details": {
+                    "id": order.id,
+                    "client_name": order.client_name,
+                    "object_info": order.object_info,
+                    "bag_id": order.bag_id,
+                    "bag_status": bag.status if bag else None,
+                    "executor_id": order.executor_id,
+                    "is_late": bool(order.is_late),
+                },
+            })
+            return result
+
+    raise HTTPException(404, "Код не распознан. Сканируйте dd… / sumka… / DY… / us… / EAN / TP… / ORD…")
 
 @app.get("/api/health")
 def health():

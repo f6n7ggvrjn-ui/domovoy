@@ -65,14 +65,14 @@ document.getElementById("btn-logout").onclick = logout;
 function navItems() {
   if (user.role === "admin") {
     return [
-      ["home", "Главная"], ["orders", "Заказы"], ["board", "Сборка"], ["bags", "Сумки"],
+      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["board", "Сборка"], ["bags", "Сумки"],
       ["employees", "Сотрудники"], ["cells", "Ячейки"], ["points", "Точки"],
       ["missing", "Пропажи"], ["receive", "Приёмка"], ["eans", "EAN"],
     ];
   }
   if (user.role === "warehouse") {
     return [
-      ["home", "Главная"], ["assemble", "Сборка"], ["issue", "Выдача"],
+      ["home", "Главная"], ["lookup", "Объект"], ["assemble", "Сборка"], ["issue", "Выдача"],
       ["returnbag", "Возврат"], ["unpack", "Разбор"], ["receive", "Приёмка"], ["board", "Очередь"],
     ];
   }
@@ -99,6 +99,7 @@ function render() {
 async function renderPage() {
   switch (page) {
     case "home": return renderHome();
+    case "lookup": return renderLookup();
     case "assemble": return renderAssemble();
     case "issue": return renderIssue();
     case "unpack": return renderUnpack();
@@ -120,6 +121,79 @@ function afterRender() {
   const inp = document.querySelector(".scan-box input");
   if (inp) inp.focus();
 }
+
+
+async function renderLookup() {
+  return `
+    <div class="page-h"><h1>Информация по объекту</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+    <div class="scan-box">
+      <div>Отсканируйте любой код</div>
+      <input id="lookup-code" placeholder="dd… / sumka… / DY… / us… / EAN / ORD…"
+        onkeydown="if(event.key==='Enter')doLookup()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="doLookup()">Показать</button>
+    </div>
+    <div id="lookup-result" style="margin-top:1rem"></div>
+    <p style="color:var(--muted);font-size:0.85rem;margin-top:1rem">
+      Как в Ozon: оборудование, сумка, ячейка, сотрудник, EAN, заказ, точка передачи.
+    </p>`;
+}
+window.doLookup = async () => {
+  const code = document.getElementById("lookup-code").value.trim();
+  const box = document.getElementById("lookup-result");
+  if (!code) { toast("Введите или отсканируйте код", true); return; }
+  box.innerHTML = "<p style='color:var(--muted)'>Поиск…</p>";
+  try {
+    const r = await api("/lookup?code=" + encodeURIComponent(code));
+    const d = r.details || {};
+    let extra = "";
+    if (r.kind === "equipment") {
+      extra = `
+        <div style="margin-top:0.75rem;font-size:0.9rem;color:var(--muted)">
+          ID: <code>${d.id}</code>${d.ean ? " · EAN " + d.ean : ""}<br>
+          ${d.cell_code ? "Ячейка: " + d.cell_code + "<br>" : ""}
+          ${d.bag_id ? "Сумка: " + d.bag_id + "<br>" : ""}
+          Последние: ${d.last_user_1 || "—"} / ${d.last_user_2 || "—"}
+        </div>`;
+    } else if (r.kind === "bag") {
+      extra = `
+        <div style="margin-top:0.75rem;font-size:0.9rem">
+          ${d.order_id ? "Заказ: " + d.order_id + "<br>" : ""}
+          ${d.address ? d.address + "<br>" : ""}
+          ${d.object_info ? "<span style='color:var(--muted)'>" + d.object_info + "</span><br>" : ""}
+          В сумке: <b>${d.items_count || 0}</b> ед.
+          <ul class="item-list">${(d.items || []).map(i => `<li>${i.name} <code>${i.id}</code></li>`).join("") || "<li>—</li>"}</ul>
+        </div>`;
+    } else if (r.kind === "cell") {
+      extra = `<ul class="item-list">${(d.items || []).map(i => `<li>${i.name} <code>${i.id}</code></li>`).join("") || "<li>пусто</li>"}</ul>`;
+    } else if (r.kind === "ean") {
+      extra = `<ul class="item-list">${Object.entries(d.placement || {}).map(([k, v]) =>
+        `<li><b>${k}</b>: ${(v || []).join(", ")}</li>`).join("") || "<li>—</li>"}</ul>`;
+    } else if (r.kind === "user") {
+      extra = `<div style="margin-top:0.5rem">Сумки у сотрудника: ${(d.bags_in_use || []).map(b => b.id).join(", ") || "—"}</div>`;
+    } else if (r.kind === "order") {
+      extra = `<div style="margin-top:0.5rem;font-size:0.9rem;color:var(--muted)">
+        ${d.id}${d.client_name ? " · " + d.client_name : ""}<br>
+        ${d.object_info || ""}</div>`;
+    }
+    box.innerHTML = `
+      <div class="card">
+        <div style="font-size:0.75rem;text-transform:uppercase;color:var(--muted);letter-spacing:0.04em">${r.kind || ""}</div>
+        <div style="font-size:1.15rem;font-weight:700;margin:0.35rem 0">${r.title || r.code}</div>
+        <div class="status status-ok" style="display:inline-block">${r.status || ""}</div>
+        <div style="margin-top:0.75rem;padding:0.75rem;background:var(--bg);border-radius:10px;border:1px solid var(--border)">
+          <div style="font-size:0.75rem;color:var(--muted)">ГДЕ СЕЙЧАС</div>
+          <div style="font-size:1.05rem;font-weight:600;color:var(--primary);margin-top:0.25rem">${r.location || "—"}</div>
+        </div>
+        ${extra}
+      </div>`;
+    document.getElementById("lookup-code").select();
+  } catch (e) {
+    box.innerHTML = `<div class="error">${e.message}</div>`;
+    toast(e.message, true);
+  }
+};
+
 
 async function renderHome() {
   if (user.role === "warehouse" || user.role === "admin") {
@@ -351,7 +425,11 @@ window.unpDamage = async () => {
 window.unpEmpty = async () => {
   try {
     const r = await api("/unpack/declare-empty", { method: "POST", body: JSON.stringify({ code: unp.bagId }) });
-    if (!r.has_missing) { toast("Недостач нет"); return; }
+    if (!r.has_missing) {
+      toast(r.message || "Недостач нет. Сумка свободна");
+      page = "home"; render();
+      return;
+    }
     document.getElementById("unp-extra").innerHTML = `
       <div class="card" style="margin-top:1rem"><b>Не хватает:</b>
         <ul class="item-list">${r.missing.map(m => `<li>${m.name} <code>${m.id}</code></li>`).join("")}</ul>
@@ -428,7 +506,7 @@ async function renderBags() {
   return `
     <div class="page-h"><h1>Сумки</h1></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Сумка</th><th>Статус</th><th>Заказ</th><th>Сборщик</th><th>Исполнитель</th></tr></thead>
+      <thead><tr><th>Сумка</th><th>Статус</th><th>Заказ</th><th>Сборщик</th><th>Исполнитель</th><th></th></tr></thead>
       <tbody>${rows.map(b => `
         <tr>
           <td><code>${b.id}</code></td>
@@ -436,9 +514,18 @@ async function renderBags() {
           <td>${b.order_id || "—"}</td>
           <td>${b.assembled_by || "—"}</td>
           <td>${b.executor_id || "—"}</td>
+          <td>${user.role === "admin" && b.status !== "free" ? `<button class="btn btn-ghost btn-sm" onclick="bagForceFree('${b.id}')">Свободна</button>` : ""}</td>
         </tr>`).join("")}
       </tbody></table></div>`;
 }
+window.bagForceFree = async (id) => {
+  if (!confirm("Сделать " + id + " свободной?")) return;
+  try {
+    toast((await api("/bags/" + id + "/force-free", { method: "POST" })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
+
 
 async function renderOrdersAdmin() {
   const orders = await api("/orders");
