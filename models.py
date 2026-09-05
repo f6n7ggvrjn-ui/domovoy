@@ -1,23 +1,25 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Float, Boolean, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean
 from datetime import datetime
-from database import Base
+
+try:
+    from .database import Base
+except ImportError:
+    from database import Base
 
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(String(20), primary_key=True)          # us000001
+    id = Column(String(20), primary_key=True)
     full_name = Column(String(200), nullable=False)
     birth_date = Column(String(20), nullable=True)
-    role = Column(String(30), nullable=False)          # admin / warehouse / cleaner / handyman
-    status = Column(String(20), default="active")      # active / blocked / fired
+    role = Column(String(30), nullable=False)
+    status = Column(String(20), default="active")
     password_hash = Column(String(200), nullable=False)
     phone = Column(String(30), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class EquipmentType(Base):
-    """EAN / manufacturer barcode = product type"""
     __tablename__ = "equipment_types"
     ean = Column(String(50), primary_key=True)
     name = Column(String(200), nullable=False)
@@ -27,35 +29,34 @@ class EquipmentType(Base):
 
 class Equipment(Base):
     __tablename__ = "equipment"
-    id = Column(String(20), primary_key=True)          # dd75647253
-    ean = Column(String(50), ForeignKey("equipment_types.ean"), nullable=True)
+    id = Column(String(20), primary_key=True)
+    ean = Column(String(50), nullable=True)
     name = Column(String(200), nullable=False)
-    status = Column(String(40), default="in_cell")     # in_cell / in_bag / issued / damaged / missing / receiving
-    cell_code = Column(String(40), nullable=True)      # DY0010661/2
+    status = Column(String(40), default="in_cell")
+    cell_code = Column(String(40), nullable=True)
     bag_id = Column(String(20), nullable=True)
-    last_user_1 = Column(String(20), nullable=True)    # last two users who touched
+    last_user_1 = Column(String(20), nullable=True)
     last_user_2 = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Cell(Base):
     __tablename__ = "cells"
-    code = Column(String(40), primary_key=True)        # DY0010661/2
-    warehouse_no = Column(String(10), nullable=True)   # 001
-    region = Column(String(10), nullable=True)         # 066
-    shelf = Column(String(10), nullable=True)          # 1
-    slot = Column(String(10), nullable=True)           # 2
+    code = Column(String(40), primary_key=True)
+    warehouse_no = Column(String(10), nullable=True)
+    region = Column(String(10), nullable=True)
+    shelf = Column(String(10), nullable=True)
+    slot = Column(String(10), nullable=True)
     created_by = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Bag(Base):
     __tablename__ = "bags"
-    id = Column(String(20), primary_key=True)          # sumka14024
+    id = Column(String(20), primary_key=True)
     status = Column(String(40), default="free")
-    # free / assembling / at_transfer / in_use / awaiting_unpack
     order_id = Column(String(30), nullable=True)
-    executor_id = Column(String(20), nullable=True)    # us...
+    executor_id = Column(String(20), nullable=True)
     transfer_point = Column(String(100), nullable=True)
     assembled_by = Column(String(20), nullable=True)
     cutoff_minutes = Column(Integer, default=10)
@@ -68,15 +69,20 @@ class Bag(Base):
 
 class Order(Base):
     __tablename__ = "orders"
-    id = Column(String(30), primary_key=True)          # ORD83775
+    id = Column(String(30), primary_key=True)
     client_name = Column(String(200), nullable=True)
     address = Column(String(500), nullable=False)
     cleaning_type = Column(String(100), nullable=True)
+    object_info = Column(Text, nullable=True)
     executor_id = Column(String(20), nullable=True)
     status = Column(String(40), default="new")
-    # new / awaiting_assembly / assembling / ready / issued / done / cancelled
     cutoff_minutes = Column(Integer, default=10)
     bag_id = Column(String(20), nullable=True)
+    is_late = Column(Boolean, default=False)
+    late_minutes = Column(Integer, nullable=True)
+    completion_requested_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    completed_by = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     signal_sent = Column(Boolean, default=False)
 
@@ -86,8 +92,6 @@ class Operation(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     datetime = Column(DateTime, default=datetime.utcnow)
     type = Column(String(50), nullable=False)
-    # assembly_start / assembly_item / assembly_done / transfer /
-    # issue_to_executor / unpack_item / damage / missing / receive / place_cell
     user_id = Column(String(20), nullable=False)
     bag_id = Column(String(20), nullable=True)
     equipment_id = Column(String(20), nullable=True)
@@ -105,12 +109,13 @@ class MissingReport(Base):
     reported_by = Column(String(20), nullable=False)
     last_user_1 = Column(String(20), nullable=True)
     last_user_2 = Column(String(20), nullable=True)
-    status = Column(String(20), default="open")        # open / closed
+    status = Column(String(20), default="open")
+    kind = Column(String(20), default="missing")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class TransferPoint(Base):
     __tablename__ = "transfer_points"
-    code = Column(String(30), primary_key=True)  # TP01
+    code = Column(String(30), primary_key=True)
     name = Column(String(200), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
