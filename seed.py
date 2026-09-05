@@ -1,6 +1,12 @@
 from datetime import datetime, timedelta
-from models import User, EquipmentType, Equipment, Cell, Bag, Order, TransferPoint
-from auth import hash_password
+
+try:
+    from models import User, EquipmentType, Equipment, Cell, Bag, Order, TransferPoint
+    from auth import hash_password
+except ImportError:
+    from .models import User, EquipmentType, Equipment, Cell, Bag, Order, TransferPoint
+    from .auth import hash_password
+
 
 def seed(db):
     if db.query(User).count() > 0:
@@ -37,6 +43,10 @@ def seed(db):
         ))
     db.flush()
 
+    for tp in [("TP01", "Точка передачи A"), ("TP02", "Точка передачи B"), ("TP03", "Стеллаж у выхода")]:
+        db.add(TransferPoint(code=tp[0], name=tp[1]))
+    db.flush()
+
     equip = [
         ("dd10000001", "4601234567890", "Пылесос №1", "DY0010661/2"),
         ("dd10000002", "4601234567890", "Пылесос №2", "DY0010661/3"),
@@ -45,43 +55,24 @@ def seed(db):
         ("dd10000005", "4601234567892", "Швабра №2", "DY0020101/1"),
     ]
     for eid, ean, name, cell in equip:
-        db.add(Equipment(
-            id=eid, ean=ean, name=name, status="in_cell", cell_code=cell,
-        ))
+        db.add(Equipment(id=eid, ean=ean, name=name, status="in_cell", cell_code=cell))
 
-    for tp in [("TP01", "Точка передачи A"), ("TP02", "Точка передачи B"), ("TP03", "Стеллаж у выхода")]:
-        db.add(TransferPoint(code=tp[0], name=tp[1]))
-    db.flush()
-
-    bags = ["sumka14024", "sumka14025", "sumka14026", "sumka14027"]
-    for b in bags:
+    for b in ["sumka14024", "sumka14025", "sumka14026", "sumka14027"]:
         db.add(Bag(id=b, status="free"))
 
     db.add(Order(
-        id="ORD83775",
-        client_name="ООО Ромашка",
+        id="ORD83775", client_name="ООО Ромашка",
         address="г. Москва, ул. Ленина, 10, офис 301",
-        cleaning_type="Генеральная уборка",
-        executor_id="us000003",
-        status="awaiting_assembly",
-        cutoff_minutes=10,
-        created_at=datetime.utcnow(),
-        signal_sent=True,
+        cleaning_type="Генеральная уборка", object_info="Домофон 301#, 3 этаж",
+        executor_id="us000003", status="awaiting_assembly", cutoff_minutes=10,
+        created_at=datetime.utcnow(), signal_sent=True,
     ))
     db.add(Order(
-        id="ORD85736",
-        client_name="ИП Смирнов",
+        id="ORD85736", client_name="ИП Смирнов",
         address="г. Москва, пр. Мира, 25",
-        cleaning_type="Поддерживающая",
-        executor_id="us000004",
-        status="awaiting_assembly",
-        cutoff_minutes=20,
-        created_at=datetime.utcnow() - timedelta(minutes=5),
-        signal_sent=True,
+        cleaning_type="Поддерживающая", object_info="Парковка сзади",
+        executor_id="us000004", status="awaiting_assembly", cutoff_minutes=20,
+        created_at=datetime.utcnow() - timedelta(minutes=5), signal_sent=True,
     ))
-
     db.commit()
     print("Seed OK")
-    print("  us000001 / admin123   (Админ)")
-    print("  us000002 / sklad123   (Склад)")
-    print("  us000003 / cleaner123 (Клинер)")
