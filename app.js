@@ -795,9 +795,16 @@ window.empSearch = async () => {
       </div>`).join("");
   } catch (e) { toast(e.message, true); }
 };
+window.empRestore = async (id) => {
+  if (!confirm("Восстановить " + id + "?")) return;
+  try {
+    toast((await api("/employees/" + id + "/restore", { method: "POST" })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
 window.empDel = async (id) => {
-  if (!confirm("Отключить " + id + "?")) return;
-  try { await api("/employees/" + id, { method: "DELETE" }); toast("Отключён"); render(); }
+  if (!confirm("Уволить " + id + "? Учётку можно будет восстановить.")) return;
+  try { await api("/employees/" + id, { method: "DELETE" }); toast("Уволен"); render(); }
   catch (e) { toast(e.message, true); }
 };
 
