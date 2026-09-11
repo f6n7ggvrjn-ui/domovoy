@@ -721,8 +721,9 @@ async function renderEmployees() {
             <button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${(u.full_name||"").replace(/'/g,"")}')">Изменить</button>
             ${u.status !== "blocked" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empBlock('${u.id}')">Блок</button>` : ""}
             ${u.status === "blocked" ? `<button class="btn btn-accent btn-sm" onclick="empUnblock('${u.id}')">Разблок</button>` : ""}
+            ${u.status === "fired" ? `<button class="btn btn-accent btn-sm" onclick="empRestore('${u.id}')">Восстановить</button>` : ""}
             <button class="btn btn-ghost btn-sm" onclick="empHist('${u.id}')">История</button>
-            ${u.role !== "admin" || u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Увол.</button>` : ""}
+            ${u.status !== "fired" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Увол.</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>
