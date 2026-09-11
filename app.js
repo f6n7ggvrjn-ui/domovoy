@@ -592,14 +592,14 @@ async function renderBags() {
           <td>${b.assembled_by || "—"}</td>
           <td>${b.executor_id || "—"}</td>
           <td style="white-space:nowrap">
-            ${user.role === "admin" && b.status !== "free" ? `<button class="btn btn-ghost btn-sm" onclick="bagForceFree('${b.id}')">Свободна</button>` : ""}
+            ${user.role === "admin" && b.status !== "free" ? `<button class="btn btn-ghost btn-sm" onclick="bagForceFree('${b.id}')">${b.status === "assembling" ? "Сбросить сборку" : "Свободна"}</button>` : ""}
             ${user.role === "admin" && b.status === "free" ? `<button class="btn btn-danger btn-sm" onclick="bagDelete('${b.id}')">Удалить</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>`;
 }
 window.bagForceFree = async (id) => {
-  if (!confirm("Сделать " + id + " свободной?")) return;
+  if (!confirm("Сбросить сумку " + id + "?\nОборудование вернётся в ячейку, заказ снова ждёт сборки.")) return;
   try {
     toast((await api("/bags/" + id + "/force-free", { method: "POST" })).message);
     render();

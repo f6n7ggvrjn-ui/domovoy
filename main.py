@@ -634,7 +634,8 @@ def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends
             order.executor_id = exec_id
     for eq in db.query(Equipment).filter(Equipment.bag_id == bag.id).all():
         eq.status = "issued"
-        touch_equipment(eq, user.id)
+        # касание исполнителя, не кладовщика
+        touch_equipment(eq, exec_id)
     log_op(db, "issue_to_executor", user.id, bag_id=bag.id, order_id=bag.order_id, comment=exec_id)
     db.commit()
     return {"ok": True, "message": f"Сумка {bag.id} выдана {executor.full_name}",
@@ -705,13 +706,28 @@ def unpack_damage(data: DamageIn, db: Session = Depends(get_db), user: User = De
     eq = db.query(Equipment).filter(Equipment.id == eq_id).first()
     if not eq:
         raise HTTPException(404, "Не найдено")
+    bag = db.query(Bag).filter(Bag.id == bag_id).first()
+    executor_id = bag.executor_id if bag else None
+    if not executor_id and bag and bag.order_id:
+        order = db.query(Order).filter(Order.id == bag.order_id).first()
+        if order:
+            executor_id = order.executor_id
+    # last users: исполнитель, без склада
+    lu1 = executor_id or (eq.last_user_1 if eq.last_user_1 != user.id else eq.last_user_2)
+    lu2 = None
+    if eq.last_user_1 and eq.last_user_1 != user.id and eq.last_user_1 != lu1:
+        lu2 = eq.last_user_1
+    elif eq.last_user_2 and eq.last_user_2 != user.id and eq.last_user_2 != lu1:
+        lu2 = eq.last_user_2
     eq.status = "damaged"
     eq.bag_id = None
     eq.cell_code = PROBLEM_ZONE
-    touch_equipment(eq, user.id)
+    if lu1:
+        eq.last_user_1 = lu1
+        eq.last_user_2 = lu2
     db.add(MissingReport(
-        equipment_id=eq.id, bag_id=bag_id, reported_by=user.id,
-        last_user_1=eq.last_user_1, last_user_2=eq.last_user_2,
+        equipment_id=eq.id, bag_id=bag_id, order_id=bag.order_id if bag else None,
+        reported_by=user.id, last_user_1=lu1, last_user_2=lu2,
         kind="damaged", status="open",
     ))
     log_op(db, "damage", user.id, bag_id=bag_id, equipment_id=eq.id, comment=PROBLEM_ZONE)
@@ -757,17 +773,46 @@ def start_investigation(data: ScanIn, db: Session = Depends(get_db), user: User 
         raise HTTPException(404, "Сумка не найдена")
     missing = db.query(Equipment).filter(Equipment.bag_id == bag.id).all()
     reports = []
+    # для пропажи фиксируем исполнителя, не сотрудника склада
+    executor_id = bag.executor_id
+    if not executor_id and bag.order_id:
+        order = db.query(Order).filter(Order.id == bag.order_id).first()
+        if order:
+            executor_id = order.executor_id
     for eq in missing:
+        # кто касался до склада (без кладовщика)
+        u1, u2 = eq.last_user_1, eq.last_user_2
+        def _is_wh(uid):
+            if not uid:
+                return True
+            uu = db.query(User).filter(User.id == uid).first()
+            return not uu or uu.role in ("warehouse", "admin")
+        # оставляем только исполнителей / мастеров
+        chain = [x for x in [u1, u2, executor_id] if x and not _is_wh(x)]
+        # уникальные с сохранением порядка
+        seen = set()
+        chain_f = []
+        for x in chain:
+            if x not in seen:
+                seen.add(x)
+                chain_f.append(x)
+        if executor_id and executor_id not in seen:
+            chain_f.insert(0, executor_id)
+        lu1 = chain_f[0] if chain_f else executor_id
+        lu2 = chain_f[1] if len(chain_f) > 1 else None
         eq.status = "missing"
         eq.bag_id = None
-        touch_equipment(eq, user.id)
+        # не пишем склад в last_user
+        if lu1:
+            eq.last_user_1 = lu1
+            eq.last_user_2 = lu2
         db.add(MissingReport(
             equipment_id=eq.id, bag_id=bag.id, order_id=bag.order_id,
-            reported_by=user.id, last_user_1=eq.last_user_1, last_user_2=eq.last_user_2,
+            reported_by=user.id, last_user_1=lu1, last_user_2=lu2,
             kind="missing", status="open",
         ))
         reports.append(eq.id)
-        log_op(db, "missing", user.id, bag_id=bag.id, equipment_id=eq.id)
+        log_op(db, "missing", user.id, bag_id=bag.id, equipment_id=eq.id, comment=f"executor:{lu1}")
     bag.status = "free"
     bag.order_id = None
     bag.executor_id = None
@@ -1166,13 +1211,33 @@ def admin_update_self(data: AdminSelfIn, db: Session = Depends(get_db), user: Us
 
 @app.post("/api/bags/{bag_id}/force-free")
 def force_free_bag(bag_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Сброс зависшей сумки: оборудование возвращается на склад (первая ячейка), заказ снова ждёт сборки."""
     bag_id = normalize(bag_id).lower()
     bag = db.query(Bag).filter(Bag.id == bag_id).first()
     if not bag:
         raise HTTPException(404, "Сумка не найдена")
-    left = db.query(Equipment).filter(Equipment.bag_id == bag.id).count()
-    if left:
-        raise HTTPException(400, f"В сумке ещё {left} ед. Сначала разбор или расследование")
+
+    items = db.query(Equipment).filter(Equipment.bag_id == bag.id).all()
+    # ячейка по умолчанию для возврата
+    default_cell = db.query(Cell).order_by(Cell.code).first()
+    default_code = default_cell.code if default_cell else "DY0010661/2"
+
+    returned = []
+    for eq in items:
+        eq.bag_id = None
+        eq.status = "in_cell"
+        eq.cell_code = default_code
+        returned.append(eq.id)
+        log_op(db, "bag_force_return", user.id, bag_id=bag.id, equipment_id=eq.id, cell_code=default_code)
+
+    order_id = bag.order_id
+    if order_id:
+        order = db.query(Order).filter(Order.id == order_id).first()
+        if order and order.status in ("assembling", "assembling_late", "ready", "issued"):
+            order.status = "awaiting_assembly"
+            order.bag_id = None
+            log_op(db, "assembly_cancelled", user.id, order_id=order.id, bag_id=bag.id)
+
     bag.status = "free"
     bag.order_id = None
     bag.executor_id = None
@@ -1180,9 +1245,15 @@ def force_free_bag(bag_id: str, db: Session = Depends(get_db), user: User = Depe
     bag.assembled_by = None
     bag.assembly_started_at = None
     bag.assembly_finished_at = None
-    log_op(db, "bag_force_free", user.id, bag_id=bag.id)
+    bag.issued_at = None
+    log_op(db, "bag_force_free", user.id, bag_id=bag.id, comment=f"returned:{len(returned)}")
     db.commit()
-    return {"ok": True, "message": f"Сумка {bag.id} свободна"}
+    msg = f"Сумка {bag.id} свободна"
+    if returned:
+        msg += f". Оборудование ({len(returned)} шт) → {default_code}"
+    if order_id:
+        msg += f". Заказ {order_id} снова ожидает сборки"
+    return {"ok": True, "message": msg, "returned": returned, "cell": default_code}
 
 @app.get("/api/tsd/signals")
 def tsd_signals(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse"))):
