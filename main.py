@@ -115,6 +115,7 @@ class LoginIn(BaseModel):
     password: str
 
 class EmployeeIn(BaseModel):
+    id: Optional[str] = None  # us + 6 цифр, если не указан — берётся свободный
     full_name: str
     birth_date: Optional[str] = None
     role: str
@@ -309,10 +310,17 @@ def search_employee(q: str, db: Session = Depends(get_db), user: User = Depends(
 def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     if data.role not in ("warehouse", "cleaner", "handyman", "admin"):
         raise HTTPException(400, "Роль: warehouse / cleaner / handyman / admin")
-    nid = next_employee_id(db, user)["id"]
-    while db.query(User).filter(User.id == nid).first():
-        n = int(nid[2:]) + 1
-        nid = f"us{n:06d}"
+    if data.id and data.id.strip():
+        nid = normalize(data.id).lower()
+        if not is_user(nid):
+            raise HTTPException(400, "Формат учётки: us + 6 цифр, например us000107")
+        if db.query(User).filter(User.id == nid).first():
+            raise HTTPException(400, f"Учётка {nid} уже занята")
+    else:
+        nid = next_employee_id(db, user)["id"]
+        while db.query(User).filter(User.id == nid).first():
+            n = int(nid[2:]) + 1
+            nid = f"us{n:06d}"
     pwd = data.password or "123456"
     u = User(
         id=nid, full_name=data.full_name, birth_date=data.birth_date,

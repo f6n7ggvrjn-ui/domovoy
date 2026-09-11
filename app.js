@@ -696,7 +696,9 @@ async function renderEmployees() {
     </div>
     <div class="card">
       <div class="card-title">Быстрое добавление</div>
-      <label>Учётная запись</label><input id="emp-id" value="${next.id}" readonly />
+      <label>Учётная запись (us + 6 цифр)</label>
+      <input id="emp-id" value="${next.id}" placeholder="us000107" />
+      <p style="font-size:0.8rem;color:var(--muted);margin:0.25rem 0 0.5rem">Подставлен свободный номер — можно заменить своим</p>
       <label>ФИО</label><input id="emp-name" />
       <label>Дата рождения</label><input id="emp-bd" type="date" />
       <label>Пароль для входа</label><input id="emp-pass" type="text" placeholder="минимум 4 символа" />
@@ -732,6 +734,7 @@ async function renderEmployees() {
 window.empSave = async () => {
   try {
     const r = await api("/employees", { method: "POST", body: JSON.stringify({
+      id: document.getElementById("emp-id").value.trim() || null,
       full_name: document.getElementById("emp-name").value.trim(),
       birth_date: document.getElementById("emp-bd").value || null,
       role: document.getElementById("emp-role").value,
