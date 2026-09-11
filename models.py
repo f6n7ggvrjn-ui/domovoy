@@ -13,7 +13,8 @@ class User(Base):
     full_name = Column(String(200), nullable=False)
     birth_date = Column(String(20), nullable=True)
     role = Column(String(30), nullable=False)
-    status = Column(String(20), default="active")
+    status = Column(String(20), default="active")  # active / blocked / fired
+    block_reason = Column(Text, nullable=True)
     password_hash = Column(String(200), nullable=False)
     phone = Column(String(30), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -33,6 +34,7 @@ class Equipment(Base):
     ean = Column(String(50), nullable=True)
     name = Column(String(200), nullable=False)
     status = Column(String(40), default="in_cell")
+    # in_cell / in_bag / issued / damaged / missing / receiving / written_off
     cell_code = Column(String(40), nullable=True)
     bag_id = Column(String(20), nullable=True)
     last_user_1 = Column(String(20), nullable=True)
@@ -73,9 +75,11 @@ class Order(Base):
     client_name = Column(String(200), nullable=True)
     address = Column(String(500), nullable=False)
     cleaning_type = Column(String(100), nullable=True)
-    object_info = Column(Text, nullable=True)
+    object_info = Column(Text, nullable=True)  # location notes
     executor_id = Column(String(20), nullable=True)
     status = Column(String(40), default="new")
+    # new / awaiting_assembly / assembling / assembling_late / ready /
+    # issued / completion_pending / done / cancelled
     cutoff_minutes = Column(Integer, default=10)
     bag_id = Column(String(20), nullable=True)
     is_late = Column(Boolean, default=False)
@@ -109,8 +113,8 @@ class MissingReport(Base):
     reported_by = Column(String(20), nullable=False)
     last_user_1 = Column(String(20), nullable=True)
     last_user_2 = Column(String(20), nullable=True)
-    status = Column(String(20), default="open")
-    kind = Column(String(20), default="missing")
+    status = Column(String(20), default="open")  # open / written_off / restored
+    kind = Column(String(20), default="missing")  # missing / damaged
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -118,4 +122,15 @@ class TransferPoint(Base):
     __tablename__ = "transfer_points"
     code = Column(String(30), primary_key=True)
     name = Column(String(200), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserChangeLog(Base):
+    __tablename__ = "user_change_logs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(20), nullable=False)
+    changed_by = Column(String(20), nullable=False)
+    field = Column(String(50), nullable=False)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

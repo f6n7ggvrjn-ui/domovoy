@@ -52,6 +52,8 @@ document.getElementById("login-form").onsubmit = async (e) => {
     user = data.user;
     sessionStorage.setItem("dv_token", token);
     sessionStorage.setItem("dv_user", JSON.stringify(user));
+    // refresh full me
+    try { user = await api("/me"); sessionStorage.setItem("dv_user", JSON.stringify(user)); } catch(_) {}
     page = "home";
     show("app");
     startSignalPoll();
@@ -65,9 +67,10 @@ document.getElementById("btn-logout").onclick = logout;
 function navItems() {
   if (user.role === "admin") {
     return [
-      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["board", "Сборка"], ["bags", "Сумки"],
+      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История заказов"],
+      ["board", "Сборка"], ["bags", "Сумки"],
       ["employees", "Сотрудники"], ["cells", "Ячейки"], ["points", "Точки"],
-      ["missing", "Пропажи"], ["receive", "Приёмка"], ["eans", "EAN"],
+      ["missing", "Пропажи"], ["receive", "Приёмка"], ["eans", "EAN"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "warehouse") {
@@ -76,7 +79,7 @@ function navItems() {
       ["returnbag", "Возврат"], ["unpack", "Разбор"], ["receive", "Приёмка"], ["board", "Очередь"],
     ];
   }
-  return [["home", "Мои заказы"], ["profile", "Профиль"]];
+  return [["home", "Мои заказы"], ["orderHistory", "История заказов"], ["profile", "Профиль"]];
 }
 
 function render() {
@@ -113,7 +116,8 @@ async function renderPage() {
     case "orders": return renderOrdersAdmin();
     case "points": return renderPoints();
     case "returnbag": return renderReturnBag();
-    case "profile": return `<div class="card"><p><b>${user.id}</b></p><p>${user.full_name}</p><p>${user.role_label}</p></div>`;
+    case "orderHistory": return renderOrderHistory();
+    case "profile": return renderProfile();
     default: return "<p>Раздел</p>";
   }
 }
@@ -134,9 +138,7 @@ async function renderLookup() {
       <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="doLookup()">Показать</button>
     </div>
     <div id="lookup-result" style="margin-top:1rem"></div>
-    <p style="color:var(--muted);font-size:0.85rem;margin-top:1rem">
-      Как в Ozon: оборудование, сумка, ячейка, сотрудник, EAN, заказ, точка передачи.
-    </p>`;
+`;
 }
 window.doLookup = async () => {
   const code = document.getElementById("lookup-code").value.trim();
@@ -195,6 +197,63 @@ window.doLookup = async () => {
 };
 
 
+
+function renderProfile() {
+  const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=" + encodeURIComponent(user.id);
+  const blocked = user.status === "blocked";
+  return `
+    <div class="page-h"><h1>Профиль</h1></div>
+    ${blocked ? `<div class="card" style="border-color:var(--danger)"><p style="color:var(--danger);font-weight:700">Доступ к заказам заблокирован</p></div>` : ""}
+    <div class="card" style="text-align:center">
+      <p style="color:var(--muted);margin-bottom:0.75rem">QR учётной записи — покажите на складе</p>
+      <img src="${qrUrl}" alt="QR ${user.id}" width="220" height="220"
+        style="background:#fff;border-radius:12px;padding:8px;margin:0 auto;display:block" />
+      <div style="margin-top:1rem;font-size:1.25rem;font-weight:700;letter-spacing:0.04em">${user.id}</div>
+      <div style="color:var(--muted);margin-top:0.35rem">${user.full_name}</div>
+      <div style="color:var(--muted);font-size:0.9rem">${user.role_label || user.role}</div>
+    </div>
+    ${user.role === "admin" ? `
+    <div class="card">
+      <div class="card-title">Смена имени / пароля</div>
+      <label>ФИО</label><input id="adm-name" value="${user.full_name || ""}" />
+      <label>Новый пароль</label><input id="adm-pass" type="password" placeholder="оставьте пустым, если не менять" />
+      <button class="btn btn-primary btn-block" onclick="adminSaveSelf()">Сохранить</button>
+    </div>` : ""}`;
+}
+window.adminSaveSelf = async () => {
+  try {
+    const body = { full_name: document.getElementById("adm-name").value.trim() };
+    const pw = document.getElementById("adm-pass").value;
+    if (pw) body.password = pw;
+    const r = await api("/admin/profile", { method: "POST", body: JSON.stringify(body) });
+    user.full_name = r.full_name;
+    sessionStorage.setItem("dv_user", JSON.stringify(user));
+    toast("Сохранено"); render();
+  } catch (e) { toast(e.message, true); }
+};
+
+
+
+
+async function renderOrderHistory() {
+  const orders = await api("/orders?scope=history");
+  const isAdmin = user.role === "admin";
+  return `
+    <div class="page-h"><h1>История заказов</h1>
+      <p style="color:var(--muted);font-size:0.85rem">${isAdmin ? "Завершённые за 3 месяца" : "Завершённые в текущем месяце"}</p>
+    </div>
+    ${orders.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Завершён</th></tr></thead>
+      <tbody>${orders.map(o => `
+        <tr>
+          <td>${o.id}${o.bag_id ? "<br><small>"+o.bag_id+"</small>" : ""}</td>
+          <td>${o.address || ""}${o.is_late ? "<br><small style=color:var(--danger)>опоздание</small>" : ""}</td>
+          <td>${o.status_label}</td>
+          <td>${o.completed_at ? o.completed_at.replace("T"," ").slice(0,16) : "—"}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : "<p style='color:var(--muted)'>Нет завершённых заказов</p>"}`;
+}
+
 async function renderHome() {
   if (user.role === "warehouse" || user.role === "admin") {
     return `
@@ -209,7 +268,18 @@ async function renderHome() {
         ${user.role === "admin" ? `<button class="btn btn-ghost btn-lg" onclick="page='cells';render()">ЯЧЕЙКИ</button>` : ""}
       </div>`;
   }
-  const orders = await api("/orders");
+  if (user.status === "blocked") {
+    const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=" + encodeURIComponent(user.id);
+    return `<div class="page-h"><h1>Мои заказы</h1></div>
+      <div class="card" style="border-color:var(--danger);text-align:center">
+        <p style="color:var(--danger);font-weight:700;font-size:1.1rem">Доступ к заказам заблокирован</p>
+        <p style="color:var(--muted);margin:0.75rem 0">Обратитесь к администратору</p>
+        <img src="${qrUrl}" width="200" height="200" style="background:#fff;border-radius:12px;padding:8px;margin:0.5rem auto;display:block" />
+        <div style="font-weight:700;margin-top:0.5rem">${user.id}</div>
+        <div style="color:var(--muted)">${user.full_name}</div>
+      </div>`;
+  }
+  const orders = await api("/orders?scope=active");
   return `<div class="page-h"><h1>Мои заказы</h1></div>
     ${orders.map(o => `
       <div class="card">
@@ -505,7 +575,14 @@ async function renderBags() {
   const rows = await api("/bags");
   return `
     <div class="page-h"><h1>Сумки</h1></div>
-    <div class="table-wrap"><table>
+    ${user.role === "admin" ? `
+    <div class="card">
+      <div class="card-title">Добавить сумку</div>
+      <label>Код (sumka + 5 цифр)</label>
+      <input id="new-bag-id" placeholder="sumka14028" />
+      <button class="btn btn-primary btn-block" onclick="bagCreate()">Добавить</button>
+    </div>` : ""}
+    <div class="table-wrap" style="margin-top:1rem"><table>
       <thead><tr><th>Сумка</th><th>Статус</th><th>Заказ</th><th>Сборщик</th><th>Исполнитель</th><th></th></tr></thead>
       <tbody>${rows.map(b => `
         <tr>
@@ -514,7 +591,10 @@ async function renderBags() {
           <td>${b.order_id || "—"}</td>
           <td>${b.assembled_by || "—"}</td>
           <td>${b.executor_id || "—"}</td>
-          <td>${user.role === "admin" && b.status !== "free" ? `<button class="btn btn-ghost btn-sm" onclick="bagForceFree('${b.id}')">Свободна</button>` : ""}</td>
+          <td style="white-space:nowrap">
+            ${user.role === "admin" && b.status !== "free" ? `<button class="btn btn-ghost btn-sm" onclick="bagForceFree('${b.id}')">Свободна</button>` : ""}
+            ${user.role === "admin" && b.status === "free" ? `<button class="btn btn-danger btn-sm" onclick="bagDelete('${b.id}')">Удалить</button>` : ""}
+          </td>
         </tr>`).join("")}
       </tbody></table></div>`;
 }
@@ -525,10 +605,23 @@ window.bagForceFree = async (id) => {
     render();
   } catch (e) { toast(e.message, true); }
 };
+window.bagCreate = async () => {
+  try {
+    const r = await api("/bags", { method: "POST", body: JSON.stringify({ bag_id: document.getElementById("new-bag-id").value.trim() }) });
+    toast("Добавлена " + r.id); render();
+  } catch (e) { toast(e.message, true); }
+};
+window.bagDelete = async (id) => {
+  if (!confirm("Удалить " + id + "?")) return;
+  try {
+    await api("/bags/" + id, { method: "DELETE" });
+    toast("Удалено"); render();
+  } catch (e) { toast(e.message, true); }
+};
 
 
 async function renderOrdersAdmin() {
-  const orders = await api("/orders");
+  const orders = await api("/orders?scope=active");
   const emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman");
   return `
     <div class="page-h"><h1>Заказы</h1></div>
@@ -596,6 +689,12 @@ async function renderEmployees() {
   return `
     <div class="page-h"><h1>Сотрудники</h1></div>
     <div class="card">
+      <div class="card-title">Поиск по учётке</div>
+      <input id="emp-search" placeholder="us000003" onkeydown="if(event.key==='Enter')empSearch()" />
+      <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="empSearch()">Найти</button>
+      <div id="emp-search-result" style="margin-top:0.75rem"></div>
+    </div>
+    <div class="card">
       <div class="card-title">Быстрое добавление</div>
       <label>Учётная запись</label><input id="emp-id" value="${next.id}" readonly />
       <label>ФИО</label><input id="emp-name" />
@@ -606,6 +705,7 @@ async function renderEmployees() {
         <option value="warehouse">Сотрудник склада</option>
         <option value="cleaner">Клинер</option>
         <option value="handyman">Мастер на все руки</option>
+        <option value="admin">Админ</option>
       </select>
       <button class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
     </div>
@@ -613,13 +713,20 @@ async function renderEmployees() {
       <thead><tr><th>ID</th><th>ФИО</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
       <tbody>${list.map(u => `
         <tr>
-          <td>${u.id}</td><td>${u.full_name}</td><td>${u.role_label}</td><td>${u.status}</td>
-          <td>
-            ${u.role !== "admin" ? `<button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${u.full_name}')">Изменить</button>
-            <button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Удалить</button>` : ""}
+          <td>${u.id}</td>
+          <td>${u.full_name}${u.status === "blocked" && u.block_reason ? "<br><small style=color:var(--danger)>блок: "+u.block_reason+"</small>" : ""}</td>
+          <td>${u.role_label}</td>
+          <td>${u.status}</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${(u.full_name||"").replace(/'/g,"")}')">Изменить</button>
+            ${u.status !== "blocked" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empBlock('${u.id}')">Блок</button>` : ""}
+            ${u.status === "blocked" ? `<button class="btn btn-accent btn-sm" onclick="empUnblock('${u.id}')">Разблок</button>` : ""}
+            <button class="btn btn-ghost btn-sm" onclick="empHist('${u.id}')">История</button>
+            ${u.role !== "admin" || u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Увол.</button>` : ""}
           </td>
         </tr>`).join("")}
-      </tbody></table></div>`;
+      </tbody></table></div>
+    <div id="emp-hist-box"></div>`;
 }
 window.empSave = async () => {
   try {
@@ -637,11 +744,54 @@ window.empEdit = async (id, name) => {
   const nn = prompt("ФИО:", name);
   if (nn === null) return;
   const pwd = prompt("Новый пароль (пусто = не менять):");
+  const role = prompt("Роль (warehouse/cleaner/handyman/admin, пусто = не менять):");
   try {
-    await api("/employees/" + id, { method: "PATCH", body: JSON.stringify({
-      full_name: nn, password: pwd || null,
-    })});
+    const body = { full_name: nn };
+    if (pwd) body.password = pwd;
+    if (role && role.trim()) body.role = role.trim();
+    await api("/employees/" + id, { method: "PATCH", body: JSON.stringify(body) });
     toast("Сохранено"); render();
+  } catch (e) { toast(e.message, true); }
+};
+window.empBlock = async (id) => {
+  const reason = prompt("Причина блокировки (видна только админу):");
+  if (reason === null || !reason.trim()) { toast("Нужна причина", true); return; }
+  try {
+    toast((await api("/employees/" + id + "/block", { method: "POST", body: JSON.stringify({ reason: reason.trim() }) })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
+window.empUnblock = async (id) => {
+  try {
+    toast((await api("/employees/" + id + "/unblock", { method: "POST" })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
+window.empHist = async (id) => {
+  try {
+    const rows = await api("/employees/" + id + "/history");
+    const box = document.getElementById("emp-hist-box");
+    if (box) box.innerHTML = `<div class="card"><div class="card-title">История ${id}</div>
+      ${rows.length ? rows.map(r => `<div style="font-size:0.85rem;margin:0.35rem 0;border-bottom:1px solid var(--border);padding-bottom:0.35rem">
+        <b>${r.field}</b>: ${r.old_value || "—"} → ${r.new_value || "—"}
+        <br><span style="color:var(--muted)">${r.changed_by} · ${(r.created_at||"").replace("T"," ").slice(0,16)}</span>
+      </div>`).join("") : "<p style='color:var(--muted)'>Нет записей</p>"}</div>`;
+  } catch (e) { toast(e.message, true); }
+};
+window.empSearch = async () => {
+  const q = document.getElementById("emp-search").value.trim();
+  if (!q) return;
+  try {
+    const rows = await api("/employees/search?q=" + encodeURIComponent(q));
+    const box = document.getElementById("emp-search-result");
+    if (!rows.length) { box.innerHTML = "<p style='color:var(--muted)'>Не найден</p>"; return; }
+    box.innerHTML = rows.map(u => `
+      <div style="padding:0.5rem 0;border-bottom:1px solid var(--border)">
+        <b>${u.id}</b> · ${u.full_name}<br>
+        ${u.role_label} · ${u.status}
+        ${u.block_reason ? `<br><span style="color:var(--danger)">Причина блока: ${u.block_reason}</span>` : ""}
+        ${u.birth_date ? `<br>ДР: ${u.birth_date}` : ""}
+      </div>`).join("");
   } catch (e) { toast(e.message, true); }
 };
 window.empDel = async (id) => {
@@ -649,6 +799,7 @@ window.empDel = async (id) => {
   try { await api("/employees/" + id, { method: "DELETE" }); toast("Отключён"); render(); }
   catch (e) { toast(e.message, true); }
 };
+
 
 async function renderCells() {
   const list = await api("/cells");

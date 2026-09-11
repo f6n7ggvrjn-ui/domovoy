@@ -43,7 +43,7 @@ def get_current_user(
     except Exception:
         raise HTTPException(401, "Неверный или истёкший токен")
     user = db.query(User).filter(User.id == payload.get("sub")).first()
-    if not user or user.status != "active":
+    if not user or user.status == "fired":
         raise HTTPException(403, "Доступ запрещён")
     return user
 

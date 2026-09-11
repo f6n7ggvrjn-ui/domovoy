@@ -11,7 +11,7 @@ import os
 try:
     from database import Base, engine, get_db, SessionLocal
     from models import (
-        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint
+        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog
     )
     from auth import (
         hash_password, verify_password, make_token, get_current_user, require_roles, ROLE_LABELS
@@ -23,7 +23,7 @@ try:
 except ImportError:
     from .database import Base, engine, get_db, SessionLocal
     from .models import (
-        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint
+        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog
     )
     from .auth import (
         hash_password, verify_password, make_token, get_current_user, require_roles, ROLE_LABELS
@@ -50,6 +50,9 @@ def _migrate():
             ],
             "missing_reports": [
                 ("kind", "VARCHAR(20) DEFAULT 'missing'"),
+            ],
+            "users": [
+                ("block_reason", "TEXT"),
             ],
         }
         for table, additions in cols.items():
@@ -123,6 +126,21 @@ class EmployeeUpdateIn(BaseModel):
     role: Optional[str] = None
     password: Optional[str] = None
     status: Optional[str] = None
+    block_reason: Optional[str] = None
+
+class BlockIn(BaseModel):
+    reason: str
+
+class PasswordChangeIn(BaseModel):
+    old_password: Optional[str] = None
+    new_password: str
+
+class BagCreateIn(BaseModel):
+    bag_id: str
+
+class AdminSelfIn(BaseModel):
+    full_name: Optional[str] = None
+    password: Optional[str] = None
 
 class CellIn(BaseModel):
     code: str
@@ -202,6 +220,13 @@ def touch_equipment(eq: Equipment, user_id: str):
 def log_op(db, type_, user_id, **kw):
     db.add(Operation(type=type_, user_id=user_id, **kw))
 
+def log_user_change(db, user_id, changed_by, field, old, new):
+    db.add(UserChangeLog(
+        user_id=user_id, changed_by=changed_by, field=field,
+        old_value=None if old is None else str(old),
+        new_value=None if new is None else str(new),
+    ))
+
 def mark_late_if_needed(bag: Bag, order: Optional[Order]):
     if not bag.assembly_started_at:
         return
@@ -222,13 +247,14 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == login).first()
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Неверный логин или пароль")
-    if user.status != "active":
-        raise HTTPException(403, "Учётная запись неактивна")
+    if user.status == "fired":
+        raise HTTPException(403, "Учётная запись отключена")
     return {
         "access_token": make_token(user.id, user.role),
         "user": {
             "id": user.id, "full_name": user.full_name, "role": user.role,
             "role_label": ROLE_LABELS.get(user.role, user.role),
+            "status": user.status,
         },
     }
 
@@ -237,6 +263,8 @@ def me(user: User = Depends(get_current_user)):
     return {
         "id": user.id, "full_name": user.full_name, "role": user.role,
         "role_label": ROLE_LABELS.get(user.role, user.role),
+        "status": user.status,
+        "block_reason": user.block_reason if user.role == "admin" else None,
     }
 
 # ---------- employees ----------
@@ -254,7 +282,7 @@ def next_employee_id(db: Session = Depends(get_db), user: User = Depends(require
 @app.post("/api/employees")
 def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     if data.role not in ("warehouse", "cleaner", "handyman", "admin"):
-        raise HTTPException(400, "Роль: warehouse / cleaner / handyman")
+        raise HTTPException(400, "Роль: warehouse / cleaner / handyman / admin")
     nid = next_employee_id(db, user)["id"]
     while db.query(User).filter(User.id == nid).first():
         n = int(nid[2:]) + 1
@@ -262,10 +290,11 @@ def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User 
     pwd = data.password or "123456"
     u = User(
         id=nid, full_name=data.full_name, birth_date=data.birth_date,
-        role=data.role if data.role != "admin" else "warehouse",
+        role=data.role,
         status="active", password_hash=hash_password(pwd),
     )
     db.add(u)
+    log_user_change(db, u.id, user.id, "created", None, f"{u.role}/{u.full_name}")
     db.commit()
     return {"id": u.id, "full_name": u.full_name, "role": u.role, "password": pwd}
 
@@ -274,18 +303,82 @@ def update_employee(emp_id: str, data: EmployeeUpdateIn, db: Session = Depends(g
     u = db.query(User).filter(User.id == emp_id).first()
     if not u:
         raise HTTPException(404, "Сотрудник не найден")
-    if data.full_name is not None:
+    if data.full_name is not None and data.full_name != u.full_name:
+        log_user_change(db, u.id, user.id, "full_name", u.full_name, data.full_name)
         u.full_name = data.full_name
-    if data.birth_date is not None:
+    if data.birth_date is not None and data.birth_date != u.birth_date:
+        log_user_change(db, u.id, user.id, "birth_date", u.birth_date, data.birth_date)
         u.birth_date = data.birth_date
-    if data.role is not None and data.role in ("warehouse", "cleaner", "handyman"):
+    if data.role is not None and data.role in ("warehouse", "cleaner", "handyman", "admin") and data.role != u.role:
+        log_user_change(db, u.id, user.id, "role", u.role, data.role)
         u.role = data.role
-    if data.status is not None and data.status in ("active", "blocked", "fired"):
+    if data.status is not None and data.status in ("active", "blocked", "fired") and data.status != u.status:
+        log_user_change(db, u.id, user.id, "status", u.status, data.status)
         u.status = data.status
+        if data.status == "active":
+            u.block_reason = None
+    if data.block_reason is not None:
+        log_user_change(db, u.id, user.id, "block_reason", u.block_reason, data.block_reason)
+        u.block_reason = data.block_reason
     if data.password:
+        log_user_change(db, u.id, user.id, "password", "***", "***")
         u.password_hash = hash_password(data.password)
     db.commit()
     return {"ok": True, "id": u.id}
+
+@app.post("/api/employees/{emp_id}/block")
+def block_employee(emp_id: str, data: BlockIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    u = db.query(User).filter(User.id == emp_id).first()
+    if not u:
+        raise HTTPException(404, "Не найден")
+    if u.id == user.id:
+        raise HTTPException(400, "Нельзя заблокировать себя")
+    reason = (data.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Укажите причину блокировки")
+    log_user_change(db, u.id, user.id, "status", u.status, "blocked")
+    log_user_change(db, u.id, user.id, "block_reason", u.block_reason, reason)
+    u.status = "blocked"
+    u.block_reason = reason
+    db.commit()
+    return {"ok": True, "message": f"{u.id} заблокирован"}
+
+@app.post("/api/employees/{emp_id}/unblock")
+def unblock_employee(emp_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    u = db.query(User).filter(User.id == emp_id).first()
+    if not u:
+        raise HTTPException(404, "Не найден")
+    log_user_change(db, u.id, user.id, "status", u.status, "active")
+    log_user_change(db, u.id, user.id, "block_reason", u.block_reason, None)
+    u.status = "active"
+    u.block_reason = None
+    db.commit()
+    return {"ok": True, "message": f"{u.id} разблокирован"}
+
+@app.get("/api/employees/{emp_id}/history")
+def employee_history(emp_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    rows = db.query(UserChangeLog).filter(UserChangeLog.user_id == emp_id).order_by(UserChangeLog.created_at.desc()).limit(100).all()
+    return [{
+        "field": r.field, "old_value": r.old_value, "new_value": r.new_value,
+        "changed_by": r.changed_by,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    } for r in rows]
+
+@app.get("/api/employees/search")
+def search_employee(q: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    qn = normalize(q).lower()
+    u = db.query(User).filter(User.id == qn).first()
+    if not u:
+        # partial
+        rows = db.query(User).filter(User.id.contains(qn)).limit(10).all()
+        return [{"id": x.id, "full_name": x.full_name, "role": x.role,
+                 "role_label": ROLE_LABELS.get(x.role, x.role), "status": x.status,
+                 "block_reason": x.block_reason, "birth_date": x.birth_date} for x in rows]
+    return [{
+        "id": u.id, "full_name": u.full_name, "role": u.role,
+        "role_label": ROLE_LABELS.get(u.role, u.role), "status": u.status,
+        "block_reason": u.block_reason, "birth_date": u.birth_date,
+    }]
 
 @app.delete("/api/employees/{emp_id}")
 def delete_employee(emp_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
@@ -304,7 +397,7 @@ def list_employees(db: Session = Depends(get_db), user: User = Depends(require_r
     return [
         {"id": u.id, "full_name": u.full_name, "role": u.role,
          "role_label": ROLE_LABELS.get(u.role, u.role), "status": u.status,
-         "birth_date": u.birth_date}
+         "birth_date": u.birth_date, "block_reason": u.block_reason}
         for u in q.all()
     ]
 
@@ -518,8 +611,12 @@ def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends
     if not is_bag(bag_id):
         raise HTTPException(400, "Неверный код сумки")
     executor = db.query(User).filter(User.id == exec_id).first()
-    if not executor or executor.status != "active":
+    if not executor:
         raise HTTPException(404, "Исполнитель не найден")
+    if executor.status == "blocked":
+        raise HTTPException(403, "Сотрудник заблокирован. Передача сумки невозможна")
+    if executor.status != "active":
+        raise HTTPException(403, "Учётная запись неактивна")
     if executor.role not in ("cleaner", "handyman"):
         raise HTTPException(400, "Только клинер или мастер")
     bag = db.query(Bag).filter(Bag.id == bag_id).first()
@@ -728,14 +825,27 @@ def receive_unit(data: ReceiveIn, db: Session = Depends(get_db), user: User = De
     t = db.query(EquipmentType).filter(EquipmentType.ean == ean).first()
     if not t:
         raise HTTPException(404, "EAN не найден")
-    if db.query(Equipment).filter(Equipment.id == eq_id).first():
-        raise HTTPException(400, "Код единицы уже есть")
-    eq = Equipment(id=eq_id, ean=ean, name=t.name, status="receiving")
-    touch_equipment(eq, user.id)
-    db.add(eq)
-    log_op(db, "receive", user.id, equipment_id=eq.id, comment=ean)
+    existing = db.query(Equipment).filter(Equipment.id == eq_id).first()
+    if existing and existing.status not in ("written_off", "missing"):
+        raise HTTPException(400, "Код единицы уже используется")
+    if existing:
+        existing.ean = ean
+        existing.name = t.name
+        existing.status = "receiving"
+        existing.cell_code = None
+        existing.bag_id = None
+        touch_equipment(existing, user.id)
+        eq = existing
+        log_op(db, "receive_reuse", user.id, equipment_id=eq.id, comment=f"reuse {ean}")
+        msg = "Код переиспользован (был списан/пропажа). Отсканируйте ячейку"
+    else:
+        eq = Equipment(id=eq_id, ean=ean, name=t.name, status="receiving")
+        touch_equipment(eq, user.id)
+        db.add(eq)
+        log_op(db, "receive", user.id, equipment_id=eq.id, comment=ean)
+        msg = "Принято. Отсканируйте ячейку"
     db.commit()
-    return {"ok": True, "equipment_id": eq.id, "name": eq.name, "message": "Принято. Отсканируйте ячейку"}
+    return {"ok": True, "equipment_id": eq.id, "name": eq.name, "message": msg}
 
 @app.post("/api/receive/place")
 def receive_place(data: PlaceIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse"))):
@@ -900,10 +1010,30 @@ def reassign_order(order_id: str, data: ReassignIn, db: Session = Depends(get_db
     return {"ok": True, "message": f"Исполнитель: {ex.full_name}"}
 
 @app.get("/api/orders")
-def list_orders(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # purge done orders older than 3 months
+    cutoff = datetime.utcnow() - timedelta(days=90)
+    old_done = db.query(Order).filter(Order.status == "done", Order.completed_at != None, Order.completed_at < cutoff).all()
+    for o in old_done:
+        db.delete(o)
+    if old_done:
+        db.commit()
+
     q = db.query(Order).order_by(Order.created_at.desc())
     if user.role in ("cleaner", "handyman"):
         q = q.filter(Order.executor_id == user.id)
+        if scope == "history":
+            # current month completed
+            now = datetime.utcnow()
+            start = datetime(now.year, now.month, 1)
+            q = q.filter(Order.status == "done", Order.completed_at >= start)
+        else:
+            q = q.filter(Order.status != "done")
+    else:
+        if scope == "history":
+            q = q.filter(Order.status == "done")
+        elif scope == "active":
+            q = q.filter(Order.status != "done")
     result = []
     for o in q.all():
         bag = db.query(Bag).filter(Bag.id == o.bag_id).first() if o.bag_id else None
@@ -921,6 +1051,7 @@ def list_orders(db: Session = Depends(get_db), user: User = Depends(get_current_
             "created_at": o.created_at.isoformat() if o.created_at else None,
         })
     return result
+
 
 @app.get("/api/orders/{order_id}/history")
 def order_history(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -979,6 +1110,59 @@ def return_bag(data: ReturnBagIn, db: Session = Depends(get_db), user: User = De
     db.commit()
     return {"ok": True, "message": f"Сумка {bag.id} ждёт разбор", "status": "awaiting_unpack"}
 
+
+
+@app.post("/api/bags")
+def create_bag(data: BagCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    bag_id = normalize(data.bag_id).lower()
+    if not is_bag(bag_id):
+        raise HTTPException(400, "Формат: sumka + 5 цифр")
+    if db.query(Bag).filter(Bag.id == bag_id).first():
+        raise HTTPException(400, "Сумка уже есть")
+    db.add(Bag(id=bag_id, status="free"))
+    log_op(db, "bag_create", user.id, bag_id=bag_id)
+    db.commit()
+    return {"ok": True, "id": bag_id}
+
+@app.delete("/api/bags/{bag_id}")
+def delete_bag(bag_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    bag_id = normalize(bag_id).lower()
+    bag = db.query(Bag).filter(Bag.id == bag_id).first()
+    if not bag:
+        raise HTTPException(404, "Не найдена")
+    if bag.status != "free":
+        raise HTTPException(400, f"Можно удалить только свободную сумку (сейчас: {bag.status})")
+    left = db.query(Equipment).filter(Equipment.bag_id == bag.id).count()
+    if left:
+        raise HTTPException(400, "В сумке ещё есть оборудование")
+    db.delete(bag)
+    log_op(db, "bag_delete", user.id, bag_id=bag_id)
+    db.commit()
+    return {"ok": True}
+
+@app.post("/api/admin/password")
+def admin_change_password(data: PasswordChangeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    if not data.new_password or len(data.new_password) < 4:
+        raise HTTPException(400, "Пароль минимум 4 символа")
+    if data.old_password and not verify_password(data.old_password, user.password_hash):
+        raise HTTPException(400, "Старый пароль неверен")
+    log_user_change(db, user.id, user.id, "password", "***", "***")
+    user.password_hash = hash_password(data.new_password)
+    db.commit()
+    return {"ok": True, "message": "Пароль изменён"}
+
+@app.post("/api/admin/profile")
+def admin_update_self(data: AdminSelfIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    if data.full_name:
+        log_user_change(db, user.id, user.id, "full_name", user.full_name, data.full_name)
+        user.full_name = data.full_name
+    if data.password:
+        if len(data.password) < 4:
+            raise HTTPException(400, "Пароль минимум 4 символа")
+        log_user_change(db, user.id, user.id, "password", "***", "***")
+        user.password_hash = hash_password(data.password)
+    db.commit()
+    return {"ok": True, "full_name": user.full_name}
 
 @app.post("/api/bags/{bag_id}/force-free")
 def force_free_bag(bag_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
