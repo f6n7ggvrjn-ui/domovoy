@@ -453,25 +453,48 @@ window.unpStart = async () => {
   } catch (e) { toast(e.message, true); }
 };
 function showUnpackUI() {
+  unp.eqId = null;
   document.getElementById("unp-area").innerHTML = `
     <div class="scan-info"><b>Сумка ${unp.bagId}</b>
+      <div style="margin-top:0.35rem;font-size:0.85rem;color:var(--muted)">Осталось в сумке:</div>
       <ul class="item-list">${(unp.expected || []).map(e => `<li>${e.name} <code>${e.id}</code></li>`).join("") || "<li>—</li>"}</ul>
     </div>
     <div class="scan-box">
-      <div>Оборудование</div><input id="unp-eq" placeholder="dd10000001" />
-      <div style="margin-top:0.75rem">Ячейка</div>
-      <input id="unp-cell" placeholder="DY0010661/2" onkeydown="if(event.key==='Enter')unpItem()" />
-      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="unpItem()">Разместить</button>
+      <div>1. Отсканируйте оборудование (dd…)</div>
+      <input id="unp-eq" placeholder="dd10000001"
+        onkeydown="if(event.key==='Enter')unpStepEq()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="unpStepEq()">Далее</button>
     </div>
     <button class="btn btn-danger btn-block" style="margin-top:0.5rem" onclick="unpDamage()">Зафиксировать повреждение</button>
     <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="unpEmpty()">Оборудование размещено</button>
     <div id="unp-extra"></div>`;
+  setTimeout(() => { const el = document.getElementById("unp-eq"); if (el) el.focus(); }, 50);
 }
+window.unpStepEq = () => {
+  const eq = (document.getElementById("unp-eq")?.value || "").trim();
+  if (!eq) { toast("Отсканируйте dd…", true); return; }
+  unp.eqId = eq;
+  const name = (unp.expected || []).find(e => e.id === eq)?.name || eq;
+  document.getElementById("unp-area").innerHTML = `
+    <div class="scan-info"><b>Сумка ${unp.bagId}</b><br>
+      Размещаем: <b>${name}</b> <code>${eq}</code>
+    </div>
+    <div class="scan-box">
+      <div>2. Отсканируйте ячейку</div>
+      <input id="unp-cell" placeholder="DY0010661/2"
+        onkeydown="if(event.key==='Enter')unpItem()" />
+      <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="unpItem()">Разместить</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="showUnpackUI()">Сменить оборудование</button>
+    </div>`;
+  setTimeout(() => { const el = document.getElementById("unp-cell"); if (el) el.focus(); }, 50);
+};
 window.unpItem = async () => {
   try {
+    const cell = (document.getElementById("unp-cell")?.value || "").trim();
+    if (!cell) { toast("Отсканируйте ячейку", true); return; }
     const r = await api("/unpack/item", { method: "POST", body: JSON.stringify({
-      bag_id: unp.bagId, equipment_id: document.getElementById("unp-eq").value.trim(),
-      cell_code: document.getElementById("unp-cell").value.trim(),
+      bag_id: unp.bagId, equipment_id: unp.eqId,
+      cell_code: cell,
     })});
     toast(r.message);
     unp.expected = r.remaining_items || [];
@@ -479,17 +502,27 @@ window.unpItem = async () => {
       document.getElementById("unp-area").innerHTML = `
         <div class="scan-info"><b>Сумка разобрана и свободна</b></div>
         <button class="btn btn-primary btn-lg" onclick="page='home';render()">На главный</button>`;
-    } else { showUnpackUI(); }
+    } else {
+      // снова список + скан dd
+      showUnpackUI();
+    }
   } catch (e) { toast(e.message, true); }
 };
 window.unpDamage = async () => {
-  const eq = prompt("Код оборудования (dd…):");
-  if (!eq) return;
+  // шаг 1: dd, если ещё не выбран
+  let eq = unp.eqId;
+  if (!eq) {
+    eq = prompt("Код оборудования (dd…):");
+    if (!eq) return;
+  }
   try {
     const r = await api("/unpack/damage", { method: "POST", body: JSON.stringify({
       bag_id: unp.bagId, equipment_id: eq, zone_code: "PROBLEMNOE_OBORUDOVANIE",
     })});
     toast(r.message);
+    // убрать из списка ожидаемых
+    unp.expected = (unp.expected || []).filter(e => e.id !== eq.toLowerCase() && e.id !== eq);
+    showUnpackUI();
   } catch (e) { toast(e.message, true); }
 };
 window.unpEmpty = async () => {
