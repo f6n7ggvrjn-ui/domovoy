@@ -515,42 +515,91 @@ window.unpInvest = async () => {
 };
 
 /* RECEIVE */
-let rcv = {};
+let rcv = { step: 1, ean: null, eqId: null, name: null };
+
+function rcvShowStep1() {
+  rcv.step = 1; rcv.ean = null; rcv.eqId = null; rcv.name = null;
+  const area = document.getElementById("rcv-area");
+  if (!area) return;
+  area.innerHTML = `
+    <div class="scan-box">
+      <div>1. Отсканируйте EAN</div>
+      <input id="rcv-ean" placeholder="4601234567890"
+        onkeydown="if(event.key==='Enter')rcvStepEan()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="rcvStepEan()">Далее</button>
+    </div>`;
+  setTimeout(() => { const el = document.getElementById("rcv-ean"); if (el) { el.focus(); el.select(); } }, 50);
+}
+
 async function renderReceive() {
+  rcv = { step: 1, ean: null, eqId: null, name: null };
   return `
     <div class="page-h"><h1>Приёмка</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div id="rcv-area">
       <div class="scan-box">
-        <div>1. EAN</div><input id="rcv-ean" placeholder="4601234567890" />
-        <div style="margin-top:0.75rem">2. Единица (dd…)</div>
-        <input id="rcv-eq" placeholder="dd20000001" onkeydown="if(event.key==='Enter')rcvAccept()" />
-        <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="rcvAccept()">Принято</button>
+        <div>1. Отсканируйте EAN</div>
+        <input id="rcv-ean" placeholder="4601234567890"
+          onkeydown="if(event.key==='Enter')rcvStepEan()" />
+        <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="rcvStepEan()">Далее</button>
       </div>
     </div>`;
 }
-window.rcvAccept = async () => {
+window.rcvStepEan = async () => {
+  const ean = (document.getElementById("rcv-ean")?.value || "").trim();
+  if (!ean) { toast("Отсканируйте EAN", true); return; }
+  try {
+    const types = await api("/equipment-types");
+    const found = (types || []).find(x => String(x.ean) === ean);
+    if (!found) { toast("EAN не найден. Добавьте в разделе EAN", true); return; }
+    rcv.ean = ean;
+    rcv.name = found.name;
+    rcv.step = 2;
+    document.getElementById("rcv-area").innerHTML = `
+      <div class="scan-info">EAN ${ean} · ${found.name}</div>
+      <div class="scan-box">
+        <div>2. Отсканируйте единицу (dd…)</div>
+        <input id="rcv-eq" placeholder="dd20000001"
+          onkeydown="if(event.key==='Enter')rcvStepDd()" />
+        <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="rcvStepDd()">Далее</button>
+        <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="rcvShowStep1()">Сменить EAN</button>
+      </div>`;
+    setTimeout(() => { const el = document.getElementById("rcv-eq"); if (el) el.focus(); }, 50);
+  } catch (e) { toast(e.message, true); }
+};
+window.rcvStepDd = async () => {
+  const eq = (document.getElementById("rcv-eq")?.value || "").trim();
+  if (!eq) { toast("Отсканируйте dd…", true); return; }
   try {
     const r = await api("/receive", { method: "POST", body: JSON.stringify({
-      ean: document.getElementById("rcv-ean").value.trim(),
-      equipment_id: document.getElementById("rcv-eq").value.trim(),
+      ean: rcv.ean,
+      equipment_id: eq,
     })});
-    rcv.eqId = r.equipment_id; toast(r.message);
+    rcv.eqId = r.equipment_id;
+    rcv.name = r.name;
+    rcv.step = 3;
+    toast(r.message);
     document.getElementById("rcv-area").innerHTML = `
       <div class="scan-info">${r.name} · <code>${r.equipment_id}</code></div>
       <div class="scan-box">
-        <div>Ячейка</div>
-        <input id="rcv-cell" placeholder="DY0010661/2" onkeydown="if(event.key==='Enter')rcvPlace()" />
+        <div>3. Отсканируйте ячейку</div>
+        <input id="rcv-cell" placeholder="DY0010661/2"
+          onkeydown="if(event.key==='Enter')rcvPlace()" />
         <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="rcvPlace()">Разместить</button>
       </div>`;
+    setTimeout(() => { const el = document.getElementById("rcv-cell"); if (el) el.focus(); }, 50);
   } catch (e) { toast(e.message, true); }
 };
 window.rcvPlace = async () => {
   try {
+    const cell = (document.getElementById("rcv-cell")?.value || "").trim();
+    if (!cell) { toast("Отсканируйте ячейку", true); return; }
     const r = await api("/receive/place", { method: "POST", body: JSON.stringify({
-      equipment_id: rcv.eqId, cell_code: document.getElementById("rcv-cell").value.trim(),
+      equipment_id: rcv.eqId, cell_code: cell,
     })});
-    toast(r.message); page = "home"; render();
+    toast(r.message);
+    // снова на EAN — следующая единица, не на главную
+    rcvShowStep1();
   } catch (e) { toast(e.message, true); }
 };
 
@@ -696,7 +745,9 @@ async function renderEmployees() {
     </div>
     <div class="card">
       <div class="card-title">Быстрое добавление</div>
-      <label>Учётная запись</label><input id="emp-id" value="${next.id}" readonly />
+      <label>Учётная запись (us + 6 цифр)</label>
+      <input id="emp-id" value="${next.id}" placeholder="us000107" />
+      <p style="font-size:0.8rem;color:var(--muted);margin:0.25rem 0 0.5rem">Подставлен свободный номер — можно заменить своим</p>
       <label>ФИО</label><input id="emp-name" />
       <label>Дата рождения</label><input id="emp-bd" type="date" />
       <label>Пароль для входа</label><input id="emp-pass" type="text" placeholder="минимум 4 символа" />
@@ -732,6 +783,7 @@ async function renderEmployees() {
 window.empSave = async () => {
   try {
     const r = await api("/employees", { method: "POST", body: JSON.stringify({
+      id: document.getElementById("emp-id").value.trim() || null,
       full_name: document.getElementById("emp-name").value.trim(),
       birth_date: document.getElementById("emp-bd").value || null,
       role: document.getElementById("emp-role").value,
