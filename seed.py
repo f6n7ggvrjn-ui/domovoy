@@ -14,10 +14,14 @@ except ImportError:
     from .auth import hash_password
 
 
-def seed():
-    db = SessionLocal()
+def seed(db=None):
+    close_after = False
+    if db is None:
+        db = SessionLocal()
+        close_after = True
     if db.query(User).first():
-        db.close()
+        if close_after:
+            db.close()
         return
     # warehouses
     db.add(Warehouse(code="001066", name="Основной склад", is_main=True))
@@ -92,5 +96,6 @@ def seed():
         created_at=datetime.utcnow() - timedelta(minutes=5), signal_sent=True,
     ))
     db.commit()
-    db.close()
+    if close_after:
+        db.close()
     print("Seed OK")
