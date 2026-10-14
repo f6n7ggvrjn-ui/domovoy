@@ -11,7 +11,7 @@ import os
 try:
     from database import Base, engine, get_db, SessionLocal
     from models import (
-        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog
+        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog, Warehouse, ShiftEntry, Shipment, ShipmentItem
     )
     from auth import (
         hash_password, verify_password, make_token, get_current_user, require_roles, ROLE_LABELS
@@ -23,7 +23,7 @@ try:
 except ImportError:
     from .database import Base, engine, get_db, SessionLocal
     from .models import (
-        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog
+        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog, Warehouse, ShiftEntry, Shipment, ShipmentItem
     )
     from .auth import (
         hash_password, verify_password, make_token, get_current_user, require_roles, ROLE_LABELS
@@ -47,12 +47,32 @@ def _migrate():
                 ("completion_requested_at", "DATETIME"),
                 ("completed_at", "DATETIME"),
                 ("completed_by", "VARCHAR(20)"),
+                ("warehouse_code", "VARCHAR(10)"),
             ],
             "missing_reports": [
                 ("kind", "VARCHAR(20) DEFAULT 'missing'"),
+                ("shipment_id", "VARCHAR(20)"),
+                ("warehouse_code", "VARCHAR(10)"),
             ],
             "users": [
                 ("block_reason", "TEXT"),
+                ("home_warehouse", "VARCHAR(10)"),
+            ],
+            "equipment": [
+                ("warehouse_code", "VARCHAR(10)"),
+                ("shipment_id", "VARCHAR(20)"),
+            ],
+            "cells": [
+                ("warehouse_code", "VARCHAR(10)"),
+            ],
+            "bags": [
+                ("warehouse_code", "VARCHAR(10)"),
+            ],
+            "operations": [
+                ("shipment_id", "VARCHAR(20)"),
+            ],
+            "transfer_points": [
+                ("warehouse_code", "VARCHAR(10)"),
             ],
         }
         for table, additions in cols.items():
@@ -241,6 +261,56 @@ def mark_late_if_needed(bag: Bag, order: Optional[Order]):
             if order.status == "assembling":
                 order.status = "assembling_late"
 
+
+# ---------- warehouses / shift / logistics helpers ----------
+def is_warehouse_code(code: str) -> bool:
+    c = normalize(code)
+    return bool(c) and c.isdigit() and len(c) == 6
+
+def is_shipment_id(code: str) -> bool:
+    c = normalize(code)
+    return bool(c) and c.isdigit() and len(c) == 11
+
+def current_season(dt: Optional[datetime] = None):
+    dt = dt or datetime.utcnow()
+    m = dt.month
+    y = dt.year
+    if m in (6, 7, 8):
+        return 1, y
+    if m in (9, 10, 11):
+        return 2, y
+    if m in (12, 1, 2):
+        return 3, y if m != 12 else y  # Dec belongs to season 3 of that year
+    return 4, y  # 3,4,5
+
+class WarehouseIn(BaseModel):
+    code: str
+    name: str
+    is_main: bool = False
+
+class ShiftMarkIn(BaseModel):
+    user_id: str
+    warehouse_code: str
+
+class ShipmentCreateIn(BaseModel):
+    shipment_id: str
+    to_warehouse: str
+    from_warehouse: str
+    assembler_id: str
+    kind: str = "transfer"  # transfer | return_defect
+
+class ShipmentPackIn(BaseModel):
+    shipment_id: str
+    equipment_id: str
+
+class ShipmentReceiveItemIn(BaseModel):
+    shipment_id: str
+    equipment_id: str
+    cell_code: str
+
+class ShipmentActionIn(BaseModel):
+    shipment_id: str
+
 # ---------- auth ----------
 @app.post("/api/auth/login")
 def login(data: LoginIn, db: Session = Depends(get_db)):
@@ -308,7 +378,7 @@ def search_employee(q: str, db: Session = Depends(get_db), user: User = Depends(
 
 @app.post("/api/employees")
 def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    if data.role not in ("warehouse", "cleaner", "handyman", "admin"):
+    if data.role not in ("warehouse", "cleaner", "handyman", "admin", "supervisor"):
         raise HTTPException(400, "Роль: warehouse / cleaner / handyman / admin")
     if data.id and data.id.strip():
         nid = normalize(data.id).lower()
@@ -343,7 +413,7 @@ def update_employee(emp_id: str, data: EmployeeUpdateIn, db: Session = Depends(g
     if data.birth_date is not None and data.birth_date != u.birth_date:
         log_user_change(db, u.id, user.id, "birth_date", u.birth_date, data.birth_date)
         u.birth_date = data.birth_date
-    if data.role is not None and data.role in ("warehouse", "cleaner", "handyman", "admin") and data.role != u.role:
+    if data.role is not None and data.role in ("warehouse", "cleaner", "handyman", "admin", "supervisor") and data.role != u.role:
         log_user_change(db, u.id, user.id, "role", u.role, data.role)
         u.role = data.role
     if data.status is not None and data.status in ("active", "blocked", "fired") and data.status != u.status:
@@ -629,7 +699,7 @@ def assembly_finish(data: AssemblyFinishIn, db: Session = Depends(get_db), user:
 
 # ---------- issue ----------
 @app.post("/api/issue")
-def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse"))):
+def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse", "supervisor"))):
     exec_id = normalize(data.executor_id).lower()
     bag_id = normalize(data.bag_id).lower()
     if not is_user(exec_id):
@@ -936,7 +1006,7 @@ def receive_place(data: PlaceIn, db: Session = Depends(get_db), user: User = Dep
 
 # ---------- missing / writeoff ----------
 @app.get("/api/missing")
-def list_missing(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def list_missing(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
     rows = db.query(MissingReport).filter(MissingReport.status == "open").order_by(MissingReport.created_at.desc()).all()
     result = []
     for r in rows:
@@ -1508,9 +1578,370 @@ def lookup(code: str, db: Session = Depends(get_db), user: User = Depends(get_cu
 
     raise HTTPException(404, "Код не распознан. Сканируйте dd… / sumka… / DY… / us… / EAN / TP… / ORD…")
 
+
+# ---------- warehouses ----------
+@app.get("/api/warehouses")
+def list_warehouses(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = db.query(Warehouse).order_by(Warehouse.code).all()
+    return [{"code": w.code, "name": w.name, "is_main": bool(w.is_main)} for w in rows]
+
+@app.post("/api/warehouses")
+def create_warehouse(data: WarehouseIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    code = normalize(data.code)
+    if not is_warehouse_code(code):
+        raise HTTPException(400, "Код склада: 6 цифр, например 001066")
+    if db.query(Warehouse).filter(Warehouse.code == code).first():
+        raise HTTPException(400, "Склад уже есть")
+    w = Warehouse(code=code, name=data.name.strip() or code, is_main=data.is_main)
+    db.add(w)
+    log_op(db, "warehouse_create", user.id, comment=code)
+    db.commit()
+    return {"code": w.code, "name": w.name}
+
+@app.delete("/api/warehouses/{code}")
+def delete_warehouse(code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    code = normalize(code)
+    w = db.query(Warehouse).filter(Warehouse.code == code).first()
+    if not w:
+        raise HTTPException(404, "Не найден")
+    db.delete(w)
+    db.commit()
+    return {"ok": True}
+
+# ---------- shift ----------
+@app.get("/api/shift/today")
+def shift_today(warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    wh = normalize(warehouse_code)
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    rows = db.query(ShiftEntry).filter(ShiftEntry.warehouse_code == wh, ShiftEntry.shift_date == today).all()
+    result = []
+    for r in rows:
+        u = db.query(User).filter(User.id == r.user_id).first()
+        if u:
+            result.append({
+                "user_id": u.id, "full_name": u.full_name, "role": u.role,
+                "role_label": ROLE_LABELS.get(u.role, u.role),
+                "status": u.status,
+            })
+    return result
+
+@app.post("/api/shift/mark")
+def shift_mark(data: ShiftMarkIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+    uid = normalize(data.user_id).lower()
+    wh = normalize(data.warehouse_code)
+    if not is_warehouse_code(wh):
+        raise HTTPException(400, "Код склада: 6 цифр")
+    u = db.query(User).filter(User.id == uid).first()
+    if not u or u.status != "active":
+        raise HTTPException(404, "Сотрудник не найден или неактивен")
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    exists = db.query(ShiftEntry).filter(
+        ShiftEntry.warehouse_code == wh, ShiftEntry.user_id == uid, ShiftEntry.shift_date == today
+    ).first()
+    if exists:
+        return {"ok": True, "message": f"{u.full_name} уже на смене", "user_id": uid}
+    db.add(ShiftEntry(warehouse_code=wh, user_id=uid, shift_date=today, marked_by=user.id))
+    log_op(db, "shift_mark", user.id, comment=f"{uid}@{wh}")
+    db.commit()
+    return {"ok": True, "message": f"{u.full_name} на смене", "user_id": uid, "full_name": u.full_name}
+
+@app.delete("/api/shift/mark")
+def shift_unmark(user_id: str, warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+    uid = normalize(user_id).lower()
+    wh = normalize(warehouse_code)
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    row = db.query(ShiftEntry).filter(
+        ShiftEntry.warehouse_code == wh, ShiftEntry.user_id == uid, ShiftEntry.shift_date == today
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
+
+@app.get("/api/shift/executors")
+def shift_executors(warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Исполнители на смене — для выбора в заказе."""
+    wh = normalize(warehouse_code)
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    rows = db.query(ShiftEntry).filter(ShiftEntry.warehouse_code == wh, ShiftEntry.shift_date == today).all()
+    result = []
+    for r in rows:
+        u = db.query(User).filter(User.id == r.user_id, User.role.in_(["cleaner", "handyman"]), User.status == "active").first()
+        if u:
+            result.append({"id": u.id, "full_name": u.full_name, "role": u.role, "role_label": ROLE_LABELS.get(u.role, u.role)})
+    # если смена пустая — fallback все клинеры (чтобы не блокировать)
+    if not result:
+        for u in db.query(User).filter(User.role.in_(["cleaner", "handyman"]), User.status == "active").all():
+            result.append({"id": u.id, "full_name": u.full_name, "role": u.role, "role_label": ROLE_LABELS.get(u.role, u.role)})
+    return result
+
+# ---------- logistics / shipments ----------
+SHIPMENT_LABELS = {
+    "forming": "Формируется",
+    "sent": "Отправлено",
+    "receiving": "На приёмке",
+    "received": "Принято",
+    "received_shortage": "Принято с недостачей",
+    "cancelled": "Отменено",
+}
+
+@app.get("/api/logistics/forming")
+def logistics_forming(warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse", "supervisor"))):
+    wh = normalize(warehouse_code)
+    rows = db.query(Shipment).filter(
+        Shipment.from_warehouse == wh, Shipment.status == "forming"
+    ).order_by(Shipment.created_at.desc()).all()
+    result = []
+    for s in rows:
+        cnt = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == s.id).count()
+        result.append({
+            "id": s.id, "to_warehouse": s.to_warehouse, "from_warehouse": s.from_warehouse,
+            "status": s.status, "status_label": SHIPMENT_LABELS.get(s.status, s.status),
+            "assembler_id": s.assembler_id, "items_count": cnt, "kind": s.kind,
+        })
+    return result
+
+@app.get("/api/logistics/history")
+def logistics_history(warehouse_code: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+    # 3 months
+    since = datetime.utcnow() - timedelta(days=90)
+    q = db.query(Shipment).filter(Shipment.created_at >= since).order_by(Shipment.created_at.desc())
+    if warehouse_code:
+        wh = normalize(warehouse_code)
+        q = q.filter((Shipment.from_warehouse == wh) | (Shipment.to_warehouse == wh))
+    result = []
+    for s in q.limit(200).all():
+        cnt = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == s.id).count()
+        missing_cnt = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == s.id, ShipmentItem.status == "missing").count()
+        result.append({
+            "id": s.id, "from_warehouse": s.from_warehouse, "to_warehouse": s.to_warehouse,
+            "status": s.status, "status_label": SHIPMENT_LABELS.get(s.status, s.status),
+            "items_count": cnt, "missing_count": missing_cnt, "kind": s.kind,
+            "season": s.season, "season_year": s.season_year,
+            "assembler_id": s.assembler_id, "created_by": s.created_by,
+            "sent_at": s.sent_at.isoformat() if s.sent_at else None,
+            "received_at": s.received_at.isoformat() if s.received_at else None,
+            "shortage_json": s.shortage_json, "shortage_visualized": bool(s.shortage_visualized),
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
+    return result
+
+@app.get("/api/logistics/track/{shipment_id}")
+def logistics_track(shipment_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    sid = normalize(shipment_id)
+    s = db.query(Shipment).filter(Shipment.id == sid).first()
+    if not s:
+        raise HTTPException(404, "Поставка не найдена")
+    items = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == s.id).all()
+    return {
+        "id": s.id, "from_warehouse": s.from_warehouse, "to_warehouse": s.to_warehouse,
+        "status": s.status, "status_label": SHIPMENT_LABELS.get(s.status, s.status),
+        "kind": s.kind, "assembler_id": s.assembler_id,
+        "items": [{"equipment_id": i.equipment_id, "name": i.name, "ean": i.ean, "status": i.status,
+                   "received_cell": i.received_cell} for i in items],
+        "items_count": len(items),
+        "sent_at": s.sent_at.isoformat() if s.sent_at else None,
+        "received_at": s.received_at.isoformat() if s.received_at else None,
+        "shortage_json": s.shortage_json,
+    }
+
+@app.post("/api/logistics/shipments")
+def create_shipment(data: ShipmentCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+    sid = normalize(data.shipment_id)
+    if not is_shipment_id(sid):
+        raise HTTPException(400, "Номер поставки: 11 цифр")
+    if db.query(Shipment).filter(Shipment.id == sid).first():
+        raise HTTPException(400, "Поставка с таким номером уже есть")
+    fw = normalize(data.from_warehouse)
+    tw = normalize(data.to_warehouse)
+    if not is_warehouse_code(fw) or not is_warehouse_code(tw):
+        raise HTTPException(400, "Коды складов: 6 цифр")
+    if fw == tw:
+        raise HTTPException(400, "Склады отправки и назначения должны отличаться")
+    if not db.query(Warehouse).filter(Warehouse.code == fw).first():
+        raise HTTPException(400, f"Склад отправки {fw} не найден")
+    if not db.query(Warehouse).filter(Warehouse.code == tw).first():
+        raise HTTPException(400, f"Склад назначения {tw} не найден")
+    assembler = db.query(User).filter(User.id == normalize(data.assembler_id).lower()).first()
+    if not assembler or assembler.role not in ("warehouse", "supervisor", "admin"):
+        raise HTTPException(400, "Укажите сотрудника склада для формирования")
+    season, syear = current_season()
+    kind = data.kind if data.kind in ("transfer", "return_defect") else "transfer"
+    s = Shipment(
+        id=sid, from_warehouse=fw, to_warehouse=tw, status="forming", kind=kind,
+        assembler_id=assembler.id, created_by=user.id, season=season, season_year=syear,
+    )
+    db.add(s)
+    log_op(db, "shipment_create", user.id, shipment_id=sid, comment=f"{fw}->{tw}")
+    db.commit()
+    return {"ok": True, "id": sid, "status": "forming", "message": f"Поставка {sid} создана, ожидает формирования"}
+
+@app.post("/api/logistics/pack")
+def pack_item(data: ShipmentPackIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse", "supervisor"))):
+    sid = normalize(data.shipment_id)
+    eq_id = normalize(data.equipment_id).lower()
+    if not is_shipment_id(sid):
+        raise HTTPException(400, "Номер поставки: 11 цифр")
+    if not is_equipment(eq_id):
+        raise HTTPException(400, "Код: dd + 8 цифр")
+    s = db.query(Shipment).filter(Shipment.id == sid).first()
+    if not s or s.status != "forming":
+        raise HTTPException(400, "Поставка не в статусе формирования")
+    eq = db.query(Equipment).filter(Equipment.id == eq_id).first()
+    if not eq:
+        raise HTTPException(404, "Оборудование не найдено")
+    if eq.status not in ("in_cell",):
+        raise HTTPException(400, f"Нельзя: статус «{eq.status}»")
+    if db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid, ShipmentItem.equipment_id == eq_id).first():
+        raise HTTPException(400, "Уже в этой поставке")
+    eq.status = "in_shipment"
+    eq.shipment_id = sid
+    eq.cell_code = None
+    eq.bag_id = None
+    touch_equipment(eq, user.id)
+    db.add(ShipmentItem(
+        shipment_id=sid, equipment_id=eq.id, ean=eq.ean, name=eq.name,
+        status="packed", packed_by=user.id,
+    ))
+    log_op(db, "shipment_pack", user.id, equipment_id=eq.id, shipment_id=sid)
+    db.commit()
+    cnt = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid).count()
+    return {"ok": True, "message": f"{eq.name} → поставка {sid}", "items_count": cnt, "equipment_id": eq.id}
+
+@app.post("/api/logistics/send")
+def send_shipment(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+    sid = normalize(data.shipment_id)
+    s = db.query(Shipment).filter(Shipment.id == sid).first()
+    if not s or s.status != "forming":
+        raise HTTPException(400, "Можно отправить только формирующуюся поставку")
+    cnt = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid).count()
+    if cnt == 0:
+        raise HTTPException(400, "В поставке нет оборудования")
+    s.status = "sent"
+    s.sent_at = datetime.utcnow()
+    log_op(db, "shipment_send", user.id, shipment_id=sid, comment=f"{cnt} ед.")
+    db.commit()
+    return {"ok": True, "message": f"Поставка {sid} отправлена ({cnt} ед.)", "status": "sent"}
+
+@app.post("/api/logistics/start-receive")
+def start_receive_shipment(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+    sid = normalize(data.shipment_id)
+    if not is_shipment_id(sid):
+        raise HTTPException(400, "Номер поставки: 11 цифр")
+    s = db.query(Shipment).filter(Shipment.id == sid).first()
+    if not s:
+        raise HTTPException(404, "Поставка не найдена")
+    if s.status not in ("sent", "receiving"):
+        raise HTTPException(400, f"Нельзя принять (статус: {s.status})")
+    s.status = "receiving"
+    items = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid).all()
+    db.commit()
+    return {
+        "ok": True, "shipment_id": sid, "to_warehouse": s.to_warehouse,
+        "items": [{"equipment_id": i.equipment_id, "name": i.name, "ean": i.ean, "status": i.status} for i in items],
+        "pending": [{"name": i.name, "ean": i.ean} for i in items if i.status == "packed"],
+        "message": "Сканируйте dd и ячейку",
+    }
+
+@app.post("/api/logistics/receive-item")
+def receive_shipment_item(data: ShipmentReceiveItemIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+    sid = normalize(data.shipment_id)
+    eq_id = normalize(data.equipment_id).lower()
+    cell = normalize(data.cell_code)
+    if not is_cell(cell):
+        raise HTTPException(400, "Неверный код ячейки")
+    s = db.query(Shipment).filter(Shipment.id == sid).first()
+    if not s or s.status != "receiving":
+        raise HTTPException(400, "Поставка не на приёмке")
+    item = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid, ShipmentItem.equipment_id == eq_id).first()
+    if not item:
+        raise HTTPException(404, "Этой единицы нет в поставке")
+    if item.status == "received":
+        raise HTTPException(400, "Уже принято")
+    eq = db.query(Equipment).filter(Equipment.id == eq_id).first()
+    if eq:
+        eq.status = "in_cell"
+        eq.cell_code = cell
+        eq.shipment_id = None
+        eq.warehouse_code = s.to_warehouse
+        touch_equipment(eq, user.id)
+    item.status = "received"
+    item.received_cell = cell
+    item.received_by = user.id
+    log_op(db, "shipment_receive_item", user.id, equipment_id=eq_id, shipment_id=sid, cell_code=cell)
+    db.commit()
+    pending = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid, ShipmentItem.status == "packed").count()
+    return {"ok": True, "message": f"{item.name} → {cell}", "pending_count": pending}
+
+@app.post("/api/logistics/finish-receive")
+def finish_receive(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+    sid = normalize(data.shipment_id)
+    s = db.query(Shipment).filter(Shipment.id == sid).first()
+    if not s or s.status != "receiving":
+        raise HTTPException(400, "Поставка не на приёмке")
+    packed = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid, ShipmentItem.status == "packed").all()
+    shortage = []
+    for item in packed:
+        item.status = "missing"
+        eq = db.query(Equipment).filter(Equipment.id == item.equipment_id).first()
+        if eq:
+            eq.status = "missing"
+            eq.shipment_id = sid
+        shortage.append({"equipment_id": item.equipment_id, "name": item.name, "ean": item.ean})
+    import json
+    if shortage:
+        s.status = "received_shortage"
+        s.shortage_json = json.dumps(shortage, ensure_ascii=False)
+        # для UI при приёмке не показываем dd в pending — но в истории админу даём всё
+        msg = f"Принято с недостачей ({len(shortage)} поз.)"
+    else:
+        s.status = "received"
+        s.shortage_json = None
+        msg = "Поставка принята полностью"
+    s.received_at = datetime.utcnow()
+    s.received_by = user.id
+    log_op(db, "shipment_finish", user.id, shipment_id=sid, comment=msg)
+    db.commit()
+    # недостача без dd для экрана приёмки
+    shortage_public = [{"name": x["name"], "ean": x.get("ean")} for x in shortage]
+    return {
+        "ok": True, "message": msg, "status": s.status,
+        "shortage": shortage,  # полный для админа
+        "shortage_public": shortage_public,  # без dd
+        "has_shortage": len(shortage) > 0,
+    }
+
+@app.post("/api/logistics/visualize-shortage")
+def visualize_shortage(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    sid = normalize(data.shipment_id)
+    s = db.query(Shipment).filter(Shipment.id == sid).first()
+    if not s or s.status != "received_shortage":
+        raise HTTPException(400, "Нет недостачи для визирования")
+    if s.shortage_visualized:
+        raise HTTPException(400, "Уже визировано")
+    items = db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid, ShipmentItem.status == "missing").all()
+    for item in items:
+        eq = db.query(Equipment).filter(Equipment.id == item.equipment_id).first()
+        db.add(MissingReport(
+            equipment_id=item.equipment_id,
+            shipment_id=sid,
+            warehouse_code=s.to_warehouse,
+            reported_by=user.id,
+            last_user_1=eq.last_user_1 if eq else None,
+            last_user_2=eq.last_user_2 if eq else None,
+            kind="missing", status="open",
+        ))
+        if eq:
+            eq.status = "missing"
+    s.shortage_visualized = True
+    log_op(db, "shipment_visualize_shortage", user.id, shipment_id=sid)
+    db.commit()
+    return {"ok": True, "message": f"Недостача визирована: {len(items)} поз. в пропажах", "count": len(items)}
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "app": "Домовой", "version": "2.1"}
+    return {"status": "ok", "app": "Домовой", "version": "3.0"}
 
 @app.get("/")
 def index():

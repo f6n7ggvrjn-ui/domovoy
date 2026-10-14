@@ -20,6 +20,7 @@ ROLE_LABELS = {
     "warehouse": "Сотрудник склада",
     "cleaner": "Клинер",
     "handyman": "Мастер на все руки",
+    "supervisor": "Старший смены",
 }
 
 def hash_password(p: str) -> str:

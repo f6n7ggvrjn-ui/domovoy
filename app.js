@@ -2,6 +2,12 @@ const API = "/api";
 let token = sessionStorage.getItem("dv_token");
 let user = JSON.parse(sessionStorage.getItem("dv_user") || "null");
 let page = "home";
+let warehouseCode = sessionStorage.getItem("dv_wh") || "001066";
+function setWarehouse(code) {
+  warehouseCode = code;
+  sessionStorage.setItem("dv_wh", code);
+}
+
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
@@ -68,22 +74,29 @@ function navItems() {
   if (user.role === "admin") {
     return [
       ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История заказов"],
-      ["board", "Сборка"], ["bags", "Сумки"],
-      ["employees", "Сотрудники"], ["cells", "Ячейки"], ["points", "Точки"],
+      ["board", "Сборка"], ["bags", "Сумки"], ["shift", "Смена"], ["logistics", "Логистика"],
+      ["employees", "Сотрудники"], ["cells", "Ячейки"], ["points", "Точки"], ["warehouses", "Склады"],
       ["missing", "Пропажи"], ["receive", "Приёмка"], ["eans", "EAN"], ["profile", "Профиль"],
+    ];
+  }
+  if (user.role === "supervisor") {
+    return [
+      ["home", "Главная"], ["lookup", "Объект"], ["issue", "Выдача"], ["cells", "Ячейки"],
+      ["missing", "Пропажи"], ["shift", "Смена"], ["logistics", "Логистика"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "warehouse") {
     return [
       ["home", "Главная"], ["lookup", "Объект"], ["assemble", "Сборка"], ["issue", "Выдача"],
-      ["returnbag", "Возврат"], ["unpack", "Разбор"], ["receive", "Приёмка"], ["board", "Очередь"],
+      ["returnbag", "Возврат"], ["unpack", "Разбор"], ["receive", "Приёмка"],
+      ["logistics", "Логистика"], ["board", "Очередь"], ["whpick", "Склад"],
     ];
   }
   return [["home", "Мои заказы"], ["orderHistory", "История заказов"], ["profile", "Профиль"]];
 }
 
 function render() {
-  document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role}`;
+  document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role} · ск.${warehouseCode}`;
   const nav = document.getElementById("nav");
   const items = navItems();
   if (!items.find(i => i[0] === page)) page = items[0][0];
@@ -118,6 +131,15 @@ async function renderPage() {
     case "returnbag": return renderReturnBag();
     case "orderHistory": return renderOrderHistory();
     case "profile": return renderProfile();
+    case "shift": return renderShift();
+    case "logistics": return renderLogistics();
+    case "warehouses": return renderWarehouses();
+    case "whpick": return renderWhPick();
+    case "logForm": return renderLogForm();
+    case "logReceive": return renderLogReceive();
+    case "logSend": return renderLogSend();
+    case "logTrack": return renderLogTrack();
+    case "logHistory": return renderLogHistory();
     default: return "<p>Раздел</p>";
   }
 }
@@ -255,17 +277,20 @@ async function renderOrderHistory() {
 }
 
 async function renderHome() {
-  if (user.role === "warehouse" || user.role === "admin") {
+  if (user.role === "warehouse" || user.role === "admin" || user.role === "supervisor") {
     return `
       <div class="page-h"><h1>Склад</h1></div>
       <div id="signal-banner" class="card" style="border-color:var(--warning);color:var(--warning);display:none"></div>
       <div class="tsd-grid">
-        <button class="btn btn-primary btn-lg" onclick="page='assemble';render()">СБОРКА ОБОРУДОВАНИЯ</button>
+        ${user.role !== "supervisor" ? `<button class="btn btn-primary btn-lg" onclick="page='assemble';render()">СБОРКА ОБОРУДОВАНИЯ</button>` : ""}
         <button class="btn btn-accent btn-lg" onclick="page='issue';render()">ВЫДАЧА ИСПОЛНИТЕЛЮ</button>
+        ${user.role !== "supervisor" ? `
         <button class="btn btn-lg" style="background:#3d2e10;color:var(--warning)" onclick="page='returnbag';render()">ВОЗВРАТ СУМКИ</button>
         <button class="btn btn-lg" style="background:#334d40;color:var(--primary)" onclick="page='unpack';render()">РАЗБОР СУМКИ</button>
-        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='receive';render()">ПРИЁМКА</button>
-        ${user.role === "admin" ? `<button class="btn btn-ghost btn-lg" onclick="page='cells';render()">ЯЧЕЙКИ</button>` : ""}
+        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='receive';render()">ПРИЁМКА</button>` : ""}
+        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='logistics';render()">ЛОГИСТИКА</button>
+        <button class="btn btn-ghost btn-lg" onclick="page='cells';render()">ЯЧЕЙКИ</button>
+        ${user.role === "admin" || user.role === "supervisor" ? `<button class="btn btn-ghost btn-lg" onclick="page='shift';render()">СМЕНА</button>` : ""}
       </div>`;
   }
   if (user.status === "blocked") {
@@ -433,31 +458,41 @@ window.issGo = async () => {
 
 /* UNPACK */
 let unp = {};
+
 async function renderUnpack() {
+  unp = {};
   return `
-    <div class="page-h"><h1>Разбор</h1>
+    <div class="page-h"><h1>Разбор сумки</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div id="unp-area">
       <div class="scan-box">
-        <div>Сканируйте сумку</div>
+        <div>Отсканируйте сумку</div>
         <input id="unp-bag" placeholder="sumka14024" onkeydown="if(event.key==='Enter')unpStart()" />
         <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="unpStart()">Начать</button>
       </div>
     </div>`;
 }
+
 window.unpStart = async () => {
   try {
-    const r = await api("/unpack/start", { method: "POST", body: JSON.stringify({ code: document.getElementById("unp-bag").value.trim() }) });
-    unp.bagId = r.bag_id; unp.expected = r.expected || [];
-    showUnpackUI(); toast(r.message);
+    const code = (document.getElementById("unp-bag")?.value || "").trim();
+    if (!code) { toast("Отсканируйте сумку", true); return; }
+    const r = await api("/unpack/start", { method: "POST", body: JSON.stringify({ code }) });
+    unp.bagId = r.bag_id;
+    unp.expected = r.expected || [];
+    toast(r.message || "Сканируйте оборудование");
+    showUnpackUI();
   } catch (e) { toast(e.message, true); }
 };
+
 function showUnpackUI() {
   unp.eqId = null;
+  const left = unp.expected || [];
   document.getElementById("unp-area").innerHTML = `
-    <div class="scan-info"><b>Сумка ${unp.bagId}</b>
-      <div style="margin-top:0.35rem;font-size:0.85rem;color:var(--muted)">Осталось в сумке:</div>
-      <ul class="item-list">${(unp.expected || []).map(e => `<li>${e.name} <code>${e.id}</code></li>`).join("") || "<li>—</li>"}</ul>
+    <div class="scan-info">
+      <b>Сумка ${unp.bagId}</b>
+      <div style="margin-top:0.35rem;font-size:0.85rem;color:var(--muted)">Осталось в сумке (${left.length}):</div>
+      <ul class="item-list">${left.map(e => `<li>${e.name} <code>${e.id}</code></li>`).join("") || "<li>пусто</li>"}</ul>
     </div>
     <div class="scan-box">
       <div>1. Отсканируйте оборудование (dd…)</div>
@@ -466,18 +501,24 @@ function showUnpackUI() {
       <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="unpStepEq()">Далее</button>
     </div>
     <button class="btn btn-danger btn-block" style="margin-top:0.5rem" onclick="unpDamage()">Зафиксировать повреждение</button>
-    <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="unpEmpty()">Оборудование размещено</button>
+    <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="unpEmpty()">
+      Всё размещено — запустить расследование
+    </button>
     <div id="unp-extra"></div>`;
   setTimeout(() => { const el = document.getElementById("unp-eq"); if (el) el.focus(); }, 50);
 }
+
 window.unpStepEq = () => {
   const eq = (document.getElementById("unp-eq")?.value || "").trim();
   if (!eq) { toast("Отсканируйте dd…", true); return; }
   unp.eqId = eq;
-  const name = (unp.expected || []).find(e => e.id === eq)?.name || eq;
+  const name = (unp.expected || []).find(e => e.id === eq || e.id === eq.toLowerCase())?.name || eq;
+  const left = unp.expected || [];
   document.getElementById("unp-area").innerHTML = `
-    <div class="scan-info"><b>Сумка ${unp.bagId}</b><br>
-      Размещаем: <b>${name}</b> <code>${eq}</code>
+    <div class="scan-info">
+      <b>Сумка ${unp.bagId}</b>
+      <div style="margin-top:0.35rem">Размещаем: <b>${name}</b> <code>${eq}</code></div>
+      <div style="margin-top:0.35rem;font-size:0.85rem;color:var(--muted)">Ещё в списке: ${left.length}</div>
     </div>
     <div class="scan-box">
       <div>2. Отсканируйте ячейку</div>
@@ -488,62 +529,117 @@ window.unpStepEq = () => {
     </div>`;
   setTimeout(() => { const el = document.getElementById("unp-cell"); if (el) el.focus(); }, 50);
 };
+
 window.unpItem = async () => {
   try {
     const cell = (document.getElementById("unp-cell")?.value || "").trim();
     if (!cell) { toast("Отсканируйте ячейку", true); return; }
     const r = await api("/unpack/item", { method: "POST", body: JSON.stringify({
-      bag_id: unp.bagId, equipment_id: unp.eqId,
+      bag_id: unp.bagId,
+      equipment_id: unp.eqId,
       cell_code: cell,
     })});
     toast(r.message);
     unp.expected = r.remaining_items || [];
     if (r.bag_empty) {
-      document.getElementById("unp-area").innerHTML = `
-        <div class="scan-info"><b>Сумка разобрана и свободна</b></div>
-        <button class="btn btn-primary btn-lg" onclick="page='home';render()">На главный</button>`;
-    } else {
-      // снова список + скан dd
-      showUnpackUI();
+      // всё размещено — сумка свободна, сразу на главную
+      toast("Сумка разобрана и свободна");
+      page = "home";
+      render();
+      return;
     }
-  } catch (e) { toast(e.message, true); }
-};
-window.unpDamage = async () => {
-  // шаг 1: dd, если ещё не выбран
-  let eq = unp.eqId;
-  if (!eq) {
-    eq = prompt("Код оборудования (dd…):");
-    if (!eq) return;
-  }
-  try {
-    const r = await api("/unpack/damage", { method: "POST", body: JSON.stringify({
-      bag_id: unp.bagId, equipment_id: eq, zone_code: "PROBLEMNOE_OBORUDOVANIE",
-    })});
-    toast(r.message);
-    // убрать из списка ожидаемых
-    unp.expected = (unp.expected || []).filter(e => e.id !== eq.toLowerCase() && e.id !== eq);
+    // снова список + скан dd
     showUnpackUI();
   } catch (e) { toast(e.message, true); }
 };
+
+window.unpDamage = async () => {
+  // пошагово: если dd ещё не выбран — спросить скан
+  let eq = unp.eqId;
+  if (!eq) {
+    // переход на скан dd для повреждения
+    document.getElementById("unp-area").innerHTML = `
+      <div class="scan-info"><b>Повреждение</b><br>Сумка ${unp.bagId}</div>
+      <div class="scan-box">
+        <div>Отсканируйте повреждённое оборудование (dd…)</div>
+        <input id="unp-dmg-eq" placeholder="dd10000001"
+          onkeydown="if(event.key==='Enter')unpDamageEq()" />
+        <button class="btn btn-danger btn-block" style="margin-top:0.75rem" onclick="unpDamageEq()">Далее</button>
+        <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="showUnpackUI()">Отмена</button>
+      </div>`;
+    setTimeout(() => document.getElementById("unp-dmg-eq")?.focus(), 50);
+    return;
+  }
+  await unpDamageSend(eq);
+};
+
+window.unpDamageEq = async () => {
+  const eq = (document.getElementById("unp-dmg-eq")?.value || "").trim();
+  if (!eq) { toast("Отсканируйте dd…", true); return; }
+  document.getElementById("unp-area").innerHTML = `
+    <div class="scan-info"><b>Повреждение</b> <code>${eq}</code></div>
+    <div class="scan-box">
+      <div>Отсканируйте зону PROBLEMNOE_OBORUDOVANIE</div>
+      <input id="unp-dmg-zone" placeholder="PROBLEMNOE_OBORUDOVANIE"
+        onkeydown="if(event.key==='Enter')unpDamageZone('${eq}')" />
+      <button class="btn btn-danger btn-block" style="margin-top:0.75rem" onclick="unpDamageZone('${eq}')">Зафиксировать</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="showUnpackUI()">Отмена</button>
+    </div>`;
+  setTimeout(() => document.getElementById("unp-dmg-zone")?.focus(), 50);
+};
+
+window.unpDamageZone = async (eq) => {
+  const zone = (document.getElementById("unp-dmg-zone")?.value || "").trim() || "PROBLEMNOE_OBORUDOVANIE";
+  await unpDamageSend(eq, zone);
+};
+
+async function unpDamageSend(eq, zone) {
+  try {
+    const r = await api("/unpack/damage", { method: "POST", body: JSON.stringify({
+      bag_id: unp.bagId,
+      equipment_id: eq,
+      zone_code: zone || "PROBLEMNOE_OBORUDOVANIE",
+    })});
+    toast(r.message);
+    const id = eq.toLowerCase();
+    unp.expected = (unp.expected || []).filter(e => e.id !== id && e.id !== eq);
+    if (!unp.expected.length) {
+      toast("Сумка разобрана");
+      page = "home";
+      render();
+      return;
+    }
+    showUnpackUI();
+  } catch (e) { toast(e.message, true); }
+}
+
 window.unpEmpty = async () => {
   try {
     const r = await api("/unpack/declare-empty", { method: "POST", body: JSON.stringify({ code: unp.bagId }) });
     if (!r.has_missing) {
       toast(r.message || "Недостач нет. Сумка свободна");
-      page = "home"; render();
+      page = "home";
+      render();
       return;
     }
+    // есть недостача — показать список и кнопку расследования
     document.getElementById("unp-extra").innerHTML = `
-      <div class="card" style="margin-top:1rem"><b>Не хватает:</b>
+      <div class="card" style="margin-top:1rem;border-color:var(--danger)">
+        <b>Не хватает в сумке:</b>
         <ul class="item-list">${r.missing.map(m => `<li>${m.name} <code>${m.id}</code></li>`).join("")}</ul>
-        <button class="btn btn-danger btn-block" onclick="unpInvest()">Сумка пуста, расследование</button>
+        <button class="btn btn-danger btn-block" onclick="unpInvest()">
+          Сумка пуста — запустить расследование
+        </button>
       </div>`;
   } catch (e) { toast(e.message, true); }
 };
+
 window.unpInvest = async () => {
   try {
     const r = await api("/unpack/start-investigation", { method: "POST", body: JSON.stringify({ code: unp.bagId }) });
-    toast(r.message); page = "home"; render();
+    toast(r.message);
+    page = "home";
+    render();
   } catch (e) { toast(e.message, true); }
 };
 
@@ -704,7 +800,10 @@ window.bagDelete = async (id) => {
 
 async function renderOrdersAdmin() {
   const orders = await api("/orders?scope=active");
-  const emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman");
+  let emps = [];
+  try { emps = await api("/shift/executors?warehouse_code=" + encodeURIComponent(warehouseCode)); } catch(_) {
+    emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman");
+  }
   return `
     <div class="page-h"><h1>Заказы</h1></div>
     <div class="card">
@@ -789,6 +888,7 @@ async function renderEmployees() {
         <option value="warehouse">Сотрудник склада</option>
         <option value="cleaner">Клинер</option>
         <option value="handyman">Мастер на все руки</option>
+        <option value="supervisor">Старший смены</option>
         <option value="admin">Админ</option>
       </select>
       <button class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
@@ -936,8 +1036,8 @@ async function renderMissing() {
           <td>${r.kind === "damaged" ? "Повреждение" : "Пропажа"}</td>
           <td>${r.last_user_1 || "—"} / ${r.last_user_2 || "—"}</td>
           <td>
-            <button class="btn btn-danger btn-sm" onclick="missOff(${r.id})">Списать</button>
-            <button class="btn btn-accent btn-sm" onclick="missRest(${r.id})">Вернуть</button>
+            ${user.role === "admin" ? `<button class="btn btn-danger btn-sm" onclick="missOff(${r.id})">Списать</button>
+            <button class="btn btn-accent btn-sm" onclick="missRest(${r.id})">Вернуть</button>` : "<span style='color:var(--muted)'>только просмотр</span>"}
           </td>
         </tr>`).join("") || "<tr><td colspan=4>Нет открытых</td></tr>"}
       </tbody></table></div>`;
@@ -1047,6 +1147,334 @@ window.doReturnBag = async () => {
     toast(r.message); page = "unpack"; render();
   } catch (e) { toast(e.message, true); }
 };
+
+
+/* WAREHOUSE / SHIFT / LOGISTICS */
+async function renderWhPick() {
+  return `
+    <div class="page-h"><h1>Выбор склада</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+    <div class="scan-box">
+      <div>Отсканируйте код склада (6 цифр)</div>
+      <input id="wh-scan" placeholder="001066" value="${warehouseCode}"
+        onkeydown="if(event.key==='Enter')whApplyScan()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="whApplyScan()">Выбрать</button>
+    </div>
+    <p style="color:var(--muted);margin-top:1rem">Текущий склад: <b>${warehouseCode}</b></p>`;
+}
+window.whApplyScan = async () => {
+  const code = (document.getElementById("wh-scan")?.value || "").trim();
+  if (!/^\d{6}$/.test(code)) { toast("Код склада: 6 цифр", true); return; }
+  try {
+    const list = await api("/warehouses");
+    if (!list.find(w => w.code === code)) { toast("Склад не найден в системе", true); return; }
+    setWarehouse(code);
+    toast("Склад " + code); page = "home"; render();
+  } catch (e) { toast(e.message, true); }
+};
+
+async function renderWarehouses() {
+  const list = await api("/warehouses");
+  return `
+    <div class="page-h"><h1>Склады</h1></div>
+    <div class="card">
+      <div class="card-title">Текущий склад: ${warehouseCode}</div>
+      <label>Переключить</label>
+      <select id="wh-switch" onchange="setWarehouse(this.value);toast('Склад '+this.value);render()">
+        ${list.map(w => `<option value="${w.code}" ${w.code===warehouseCode?"selected":""}>${w.code} — ${w.name}</option>`).join("")}
+      </select>
+    </div>
+    <div class="card">
+      <div class="card-title">Добавить склад</div>
+      <label>Код (6 цифр)</label><input id="wh-code" placeholder="001066" />
+      <label>Название</label><input id="wh-name" placeholder="Основной склад" />
+      <button class="btn btn-primary btn-block" onclick="whAdd()">Сохранить</button>
+    </div>
+    ${list.map(w => `
+      <div class="card" style="display:flex;justify-content:space-between;align-items:center">
+        <div><code>${w.code}</code> — ${w.name}${w.is_main?" (основной)":""}</div>
+        ${user.role==="admin"?`<button class="btn btn-danger btn-sm" onclick="whDel('${w.code}')">Удал.</button>`:""}
+      </div>`).join("")}`;
+}
+window.whAdd = async () => {
+  try {
+    await api("/warehouses", { method: "POST", body: JSON.stringify({
+      code: document.getElementById("wh-code").value.trim(),
+      name: document.getElementById("wh-name").value.trim(),
+    })});
+    toast("Склад добавлен"); render();
+  } catch (e) { toast(e.message, true); }
+};
+window.whDel = async (code) => {
+  if (!confirm("Удалить склад " + code + "?")) return;
+  try { await api("/warehouses/" + code, { method: "DELETE" }); toast("Удалено"); render(); }
+  catch (e) { toast(e.message, true); }
+};
+
+async function renderShift() {
+  const list = await api("/shift/today?warehouse_code=" + encodeURIComponent(warehouseCode));
+  return `
+    <div class="page-h"><h1>Смена · ${warehouseCode}</h1></div>
+    <div class="scan-box">
+      <div>Отсканируйте QR сотрудника на смену</div>
+      <input id="shift-us" placeholder="us000003"
+        onkeydown="if(event.key==='Enter')shiftMark()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="shiftMark()">Отметить на смене</button>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <div class="card-title">На смене сегодня (${list.length})</div>
+      ${list.map(u => `
+        <div style="display:flex;justify-content:space-between;padding:0.4rem 0;border-bottom:1px solid var(--border)">
+          <div><b>${u.full_name}</b><br><code>${u.user_id}</code> · ${u.role_label}</div>
+          <button class="btn btn-ghost btn-sm" onclick="shiftUnmark('${u.user_id}')">Снять</button>
+        </div>`).join("") || "<p style='color:var(--muted)'>Пока никого</p>"}
+    </div>`;
+}
+window.shiftMark = async () => {
+  try {
+    const r = await api("/shift/mark", { method: "POST", body: JSON.stringify({
+      user_id: document.getElementById("shift-us").value.trim(),
+      warehouse_code: warehouseCode,
+    })});
+    toast(r.message); render();
+  } catch (e) { toast(e.message, true); }
+};
+window.shiftUnmark = async (id) => {
+  try {
+    await api("/shift/mark?user_id=" + encodeURIComponent(id) + "&warehouse_code=" + encodeURIComponent(warehouseCode), { method: "DELETE" });
+    toast("Снят со смены"); render();
+  } catch (e) { toast(e.message, true); }
+};
+
+async function renderLogistics() {
+  const forming = await api("/logistics/forming?warehouse_code=" + encodeURIComponent(warehouseCode));
+  return `
+    <div class="page-h"><h1>Логистика · ${warehouseCode}</h1></div>
+    <div class="tsd-grid">
+      ${(user.role === "admin" || user.role === "supervisor") ? `
+        <button class="btn btn-primary btn-lg" onclick="page='logSend';render()">Отправка поставки</button>
+        <button class="btn btn-accent btn-lg" onclick="page='logReceive';render()">Принять поставку</button>
+        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='logTrack';render()">Отследить</button>
+        <button class="btn btn-ghost btn-lg" onclick="page='logHistory';render()">История поставок</button>
+      ` : `
+        <button class="btn btn-primary btn-lg" onclick="page='logForm';render()">Формирование поставок</button>
+        <button class="btn btn-accent btn-lg" onclick="page='logReceive';render()">Принять поставку</button>
+      `}
+    </div>
+    ${forming.length ? `<div class="card" style="margin-top:1rem"><div class="card-title">Формируется сейчас</div>
+      ${forming.map(s => `<div><code>${s.id}</code> → ${s.to_warehouse}: <b>${s.items_count}</b> ед.
+        ${(user.role==="admin"||user.role==="supervisor")?` <button class="btn btn-sm btn-primary" onclick="logSendNow('${s.id}')">Отправить</button>`:""}
+      </div>`).join("")}
+    </div>` : ""}`;
+}
+
+// logSend page as dynamic via page switch - add cases
+async function renderLogSend() {
+  const whs = await api("/warehouses");
+  let staff = [];
+  try { staff = (await api("/employees")).filter(e => e.role === "warehouse" || e.role === "supervisor"); } catch(_) {}
+  return `
+    <div class="page-h"><h1>Отправка поставки</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='logistics';render()">Назад</button></div>
+    <div class="card">
+      <label>Склад назначения</label>
+      <select id="log-to">${whs.filter(w=>w.code!==warehouseCode).map(w=>`<option value="${w.code}">${w.code} — ${w.name}</option>`).join("")}</select>
+      <label>Номер поставки (11 цифр)</label>
+      <input id="log-sid" placeholder="04837247362" />
+      <label>Кто формирует (склад)</label>
+      <select id="log-asm">${staff.map(e=>`<option value="${e.id}">${e.full_name} (${e.id})</option>`).join("")}</select>
+      <label>Тип</label>
+      <select id="log-kind">
+        <option value="transfer">Обычная поставка</option>
+        <option value="return_defect">Обратная (брак)</option>
+      </select>
+      <button class="btn btn-primary btn-block" onclick="logCreateShip()">Начать формирование поставки</button>
+    </div>`;
+}
+window.logCreateShip = async () => {
+  try {
+    const r = await api("/logistics/shipments", { method: "POST", body: JSON.stringify({
+      shipment_id: document.getElementById("log-sid").value.trim(),
+      to_warehouse: document.getElementById("log-to").value,
+      from_warehouse: warehouseCode,
+      assembler_id: document.getElementById("log-asm").value,
+      kind: document.getElementById("log-kind").value,
+    })});
+    toast(r.message); page = "logistics"; render();
+  } catch (e) { toast(e.message, true); }
+};
+window.logSendNow = async (id) => {
+  if (!confirm("Отправить поставку " + id + "?")) return;
+  try {
+    toast((await api("/logistics/send", { method: "POST", body: JSON.stringify({ shipment_id: id }) })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
+
+let logPack = { eqId: null };
+async function renderLogForm() {
+  const forming = await api("/logistics/forming?warehouse_code=" + encodeURIComponent(warehouseCode));
+  logPack = { eqId: null };
+  return `
+    <div class="page-h"><h1>Формирование поставок</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='logistics';render()">Назад</button></div>
+    <div class="card">
+      ${forming.map(s => `<div style="padding:0.35rem 0"><code>${s.id}</code> : <b>${s.items_count}</b> ед. → ${s.to_warehouse}</div>`).join("") || "<p style='color:var(--muted)'>Нет поставок на формировании</p>"}
+    </div>
+    <div id="log-pack-area" class="scan-box" style="margin-top:1rem">
+      <div>Отсканируйте оборудование (dd…)</div>
+      <input id="log-eq" placeholder="dd10000001" onkeydown="if(event.key==='Enter')logPackEq()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="logPackEq()">Далее</button>
+    </div>`;
+}
+window.logPackEq = () => {
+  const eq = (document.getElementById("log-eq")?.value || "").trim();
+  if (!eq) { toast("Сканируйте dd…", true); return; }
+  logPack.eqId = eq;
+  document.getElementById("log-pack-area").innerHTML = `
+    <div class="scan-info">Оборудование <code>${eq}</code></div>
+    <div>Отсканируйте номер поставки (11 цифр)</div>
+    <input id="log-psid" placeholder="04837247362" onkeydown="if(event.key==='Enter')logPackDo()" />
+    <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="logPackDo()">В поставку</button>
+    <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='logForm';render()">Сменить</button>`;
+  setTimeout(() => document.getElementById("log-psid")?.focus(), 50);
+};
+window.logPackDo = async () => {
+  try {
+    const r = await api("/logistics/pack", { method: "POST", body: JSON.stringify({
+      equipment_id: logPack.eqId,
+      shipment_id: document.getElementById("log-psid").value.trim(),
+    })});
+    toast(r.message); page = "logForm"; render();
+  } catch (e) { toast(e.message, true); }
+};
+
+let logRcv = { shipmentId: null, eqId: null };
+async function renderLogReceive() {
+  logRcv = { shipmentId: null, eqId: null };
+  return `
+    <div class="page-h"><h1>Приём поставки</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='logistics';render()">Назад</button></div>
+    <div id="log-rcv-area" class="scan-box">
+      <div>Отсканируйте номер поставки (11 цифр)</div>
+      <input id="log-rsid" placeholder="04837247362" onkeydown="if(event.key==='Enter')logRcvStart()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="logRcvStart()">Начать приёмку</button>
+    </div>`;
+}
+window.logRcvStart = async () => {
+  try {
+    const sid = document.getElementById("log-rsid").value.trim();
+    const r = await api("/logistics/start-receive", { method: "POST", body: JSON.stringify({ shipment_id: sid }) });
+    logRcv.shipmentId = r.shipment_id;
+    toast(r.message);
+    logRcvShowScan(r);
+  } catch (e) { toast(e.message, true); }
+};
+function logRcvShowScan(r) {
+  const pending = (r.pending || []).map(p => `<li>${p.name}${p.ean ? " · EAN " + p.ean : ""}</li>`).join("");
+  document.getElementById("log-rcv-area").innerHTML = `
+    <div class="scan-info">Поставка <code>${logRcv.shipmentId}</code>
+      <div style="font-size:0.85rem;color:var(--muted);margin-top:0.35rem">Ожидается (без кодов dd):</div>
+      <ul class="item-list">${pending || "<li>—</li>"}</ul>
+    </div>
+    <div class="scan-box">
+      <div>1. Отсканируйте dd…</div>
+      <input id="log-req" placeholder="dd10000001" onkeydown="if(event.key==='Enter')logRcvEq()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="logRcvEq()">Далее</button>
+    </div>
+    <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="logRcvFinish()">Поставка принята</button>`;
+  setTimeout(() => document.getElementById("log-req")?.focus(), 50);
+}
+window.logRcvEq = () => {
+  const eq = (document.getElementById("log-req")?.value || "").trim();
+  if (!eq) { toast("Сканируйте dd…", true); return; }
+  logRcv.eqId = eq;
+  document.getElementById("log-rcv-area").innerHTML = `
+    <div class="scan-info"><code>${eq}</code> → ячейка</div>
+    <div class="scan-box">
+      <div>2. Отсканируйте ячейку</div>
+      <input id="log-rcell" placeholder="DY0010661/2" onkeydown="if(event.key==='Enter')logRcvItem()" />
+      <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="logRcvItem()">Разместить</button>
+    </div>`;
+  setTimeout(() => document.getElementById("log-rcell")?.focus(), 50);
+};
+window.logRcvItem = async () => {
+  try {
+    const r = await api("/logistics/receive-item", { method: "POST", body: JSON.stringify({
+      shipment_id: logRcv.shipmentId, equipment_id: logRcv.eqId,
+      cell_code: document.getElementById("log-rcell").value.trim(),
+    })});
+    toast(r.message);
+    // обновить pending
+    const tr = await api("/logistics/track/" + logRcv.shipmentId);
+    const pending = (tr.items || []).filter(i => i.status === "packed").map(i => ({ name: i.name, ean: i.ean }));
+    logRcvShowScan({ pending });
+  } catch (e) { toast(e.message, true); }
+};
+window.logRcvFinish = async () => {
+  if (!confirm("Завершить приёмку поставки?")) return;
+  try {
+    const r = await api("/logistics/finish-receive", { method: "POST", body: JSON.stringify({ shipment_id: logRcv.shipmentId }) });
+    toast(r.message);
+    if (r.has_shortage) {
+      const names = (r.shortage_public || []).map(x => x.name).join(", ");
+      alert("Недостача (названия): " + (names || "есть"));
+    }
+    page = "logistics"; render();
+  } catch (e) { toast(e.message, true); }
+};
+
+async function renderLogTrack() {
+  return `
+    <div class="page-h"><h1>Отследить поставку</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='logistics';render()">Назад</button></div>
+    <div class="scan-box">
+      <input id="log-tid" placeholder="11 цифр" onkeydown="if(event.key==='Enter')logDoTrack()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="logDoTrack()">Найти</button>
+    </div>
+    <div id="log-track-res"></div>`;
+}
+window.logDoTrack = async () => {
+  try {
+    const r = await api("/logistics/track/" + document.getElementById("log-tid").value.trim());
+    document.getElementById("log-track-res").innerHTML = `
+      <div class="card">
+        <b>${r.id}</b> · ${r.status_label}<br>
+        ${r.from_warehouse} → ${r.to_warehouse}<br>
+        Ед.: ${r.items_count}
+        <ul class="item-list">${(r.items||[]).map(i=>`<li>${i.name} <code>${i.equipment_id}</code> · ${i.status}</li>`).join("")}</ul>
+      </div>`;
+  } catch (e) { toast(e.message, true); }
+};
+
+async function renderLogHistory() {
+  const rows = await api("/logistics/history?warehouse_code=" + encodeURIComponent(warehouseCode));
+  return `
+    <div class="page-h"><h1>История поставок</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='logistics';render()">Назад</button>
+      <p style="color:var(--muted);font-size:0.85rem">За 3 месяца · сезон 1 = июн–авг, 2 = сен–ноя, 3 = дек–фев, 4 = мар–май</p>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Поставка</th><th>Маршрут</th><th>Статус</th><th>Сезон</th><th></th></tr></thead>
+      <tbody>${rows.map(s => `
+        <tr>
+          <td><code>${s.id}</code><br><small>${s.items_count} ед.${s.missing_count? " · недост. "+s.missing_count:""}</small></td>
+          <td>${s.from_warehouse} → ${s.to_warehouse}${s.kind==="return_defect"?"<br><small>брак</small>":""}</td>
+          <td>${s.status_label}</td>
+          <td>${s.season || "—"}/${s.season_year || ""}</td>
+          <td>${s.status==="received_shortage" && !s.shortage_visualized && user.role==="admin"
+            ? `<button class="btn btn-danger btn-sm" onclick="logViz('${s.id}')">Визировать недостачу</button>` : ""}</td>
+        </tr>`).join("") || "<tr><td colspan=5>Пусто</td></tr>"}
+      </tbody></table></div>`;
+}
+window.logViz = async (id) => {
+  if (!confirm("Визировать недостачу " + id + " → в пропажи?")) return;
+  try {
+    toast((await api("/logistics/visualize-shortage", { method: "POST", body: JSON.stringify({ shipment_id: id }) })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
+
 
 function playBeep() {
   try {
