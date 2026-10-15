@@ -518,7 +518,7 @@ def add_cell(data: CellIn, db: Session = Depends(get_db), user: User = Depends(r
             "shelf": cell.shelf, "slot": cell.slot}
 
 @app.get("/api/cells")
-def list_cells(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "warehouse"))):
+def list_cells(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     result = []
     for c in db.query(Cell).order_by(Cell.code).all():
         items = db.query(Equipment).filter(Equipment.cell_code == c.code, Equipment.status == "in_cell").all()
@@ -658,8 +658,14 @@ def assembly_add_item(data: AssemblyItemIn, db: Session = Depends(get_db), user:
     eq = db.query(Equipment).filter(Equipment.id == eq_id).first()
     if not eq:
         raise HTTPException(404, "Оборудование не найдено")
+    if eq.bag_id == bag.id:
+        raise HTTPException(400, f"Уже в этой сумке: {eq.id}")
+    if eq.status == "in_bag":
+        raise HTTPException(400, f"Уже в другой сумке ({eq.bag_id})")
+    if eq.status == "in_shipment":
+        raise HTTPException(400, f"Уже в поставке ({eq.shipment_id})")
     if eq.status not in ("in_cell",):
-        raise HTTPException(400, f"Нельзя положить: статус «{eq.status}»")
+        raise HTTPException(400, f"Повторный скан / нельзя: статус «{eq.status}»")
     order = db.query(Order).filter(Order.id == bag.order_id).first() if bag.order_id else None
     mark_late_if_needed(bag, order)
     eq.status = "in_bag"
@@ -1580,6 +1586,44 @@ def lookup(code: str, db: Session = Depends(get_db), user: User = Depends(get_cu
 
 
 # ---------- warehouses ----------
+
+@app.get("/api/warehouses/stock")
+def warehouses_stock(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Сводка: по каждому складу сколько единиц и список dd."""
+    whs = db.query(Warehouse).order_by(Warehouse.code).all()
+    result = []
+    for w in whs:
+        # оборудование на складе: warehouse_code совпадает ИЛИ ячейка DY{code}...
+        eqs = db.query(Equipment).filter(
+            Equipment.status.in_(["in_cell", "in_bag", "receiving", "in_shipment"])
+        ).all()
+        items = []
+        for e in eqs:
+            code = (e.warehouse_code or "")
+            if not code and e.cell_code and e.cell_code.startswith("DY") and len(e.cell_code) >= 8:
+                code = e.cell_code[2:8]
+            if code == w.code:
+                items.append({
+                    "id": e.id, "name": e.name, "status": e.status,
+                    "cell_code": e.cell_code, "bag_id": e.bag_id,
+                })
+        result.append({
+            "code": w.code, "name": w.name, "count": len(items), "items": items,
+        })
+    # единицы без склада
+    orphan = []
+    known = {w.code for w in whs}
+    for e in db.query(Equipment).filter(Equipment.status.in_(["in_cell", "in_bag", "receiving", "in_shipment"])).all():
+        code = (e.warehouse_code or "")
+        if not code and e.cell_code and e.cell_code.startswith("DY") and len(e.cell_code) >= 8:
+            code = e.cell_code[2:8]
+        if code not in known:
+            orphan.append({"id": e.id, "name": e.name, "status": e.status, "cell_code": e.cell_code})
+    if orphan:
+        result.append({"code": "—", "name": "Без склада", "count": len(orphan), "items": orphan})
+    return result
+
+
 @app.get("/api/warehouses")
 def list_warehouses(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     rows = db.query(Warehouse).order_by(Warehouse.code).all()
@@ -1790,10 +1834,14 @@ def pack_item(data: ShipmentPackIn, db: Session = Depends(get_db), user: User = 
     eq = db.query(Equipment).filter(Equipment.id == eq_id).first()
     if not eq:
         raise HTTPException(404, "Оборудование не найдено")
-    if eq.status not in ("in_cell",):
-        raise HTTPException(400, f"Нельзя: статус «{eq.status}»")
     if db.query(ShipmentItem).filter(ShipmentItem.shipment_id == sid, ShipmentItem.equipment_id == eq_id).first():
-        raise HTTPException(400, "Уже в этой поставке")
+        raise HTTPException(400, f"Повторный скан: {eq_id} уже в этой поставке")
+    if eq.status == "in_shipment":
+        raise HTTPException(400, f"Уже в другой поставке ({eq.shipment_id})")
+    if eq.status == "in_bag":
+        raise HTTPException(400, f"Сейчас в сумке {eq.bag_id}")
+    if eq.status not in ("in_cell",):
+        raise HTTPException(400, f"Повторный скан / нельзя: статус «{eq.status}»")
     eq.status = "in_shipment"
     eq.shipment_id = sid
     eq.cell_code = None
@@ -1937,6 +1985,57 @@ def visualize_shortage(data: ShipmentActionIn, db: Session = Depends(get_db), us
     log_op(db, "shipment_visualize_shortage", user.id, shipment_id=sid)
     db.commit()
     return {"ok": True, "message": f"Недостача визирована: {len(items)} поз. в пропажах", "count": len(items)}
+
+
+
+@app.get("/api/admin/backup")
+def admin_backup(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """JSON-снимок основных таблиц для ручного сохранения."""
+    import json as _json
+    from fastapi.responses import Response
+    try:
+        from database import DB_PATH
+    except ImportError:
+        try:
+            from .database import DB_PATH
+        except Exception:
+            DB_PATH = os.environ.get("DOMOVOY_DB", "/tmp/domovoy_prod.db")
+
+    def rows(model, fields):
+        out = []
+        for r in db.query(model).all():
+            d = {}
+            for f in fields:
+                v = getattr(r, f, None)
+                if hasattr(v, "isoformat"):
+                    v = v.isoformat()
+                d[f] = v
+            out.append(d)
+        return out
+
+    data = {
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "app": "Домовой",
+        "db_path": str(DB_PATH),
+        "users": rows(User, ["id", "full_name", "role", "status", "block_reason", "home_warehouse", "birth_date"]),
+        "warehouses": rows(Warehouse, ["code", "name", "is_main"]),
+        "equipment_types": rows(EquipmentType, ["ean", "name", "category"]),
+        "equipment": rows(Equipment, ["id", "ean", "name", "status", "cell_code", "bag_id", "warehouse_code", "shipment_id", "last_user_1", "last_user_2"]),
+        "cells": rows(Cell, ["code", "warehouse_no", "region", "shelf", "slot", "warehouse_code"]),
+        "bags": rows(Bag, ["id", "status", "order_id", "executor_id", "transfer_point", "warehouse_code"]),
+        "orders": rows(Order, ["id", "client_name", "address", "object_info", "executor_id", "bag_id", "status", "warehouse_code", "is_late", "late_minutes", "cutoff_minutes"]),
+        "shipments": rows(Shipment, ["id", "from_warehouse", "to_warehouse", "status", "kind", "assembler_id", "shortage_json", "season", "season_year"]),
+        "shipment_items": rows(ShipmentItem, ["id", "shipment_id", "equipment_id", "ean", "name", "status", "received_cell"]),
+        "missing_reports": rows(MissingReport, ["id", "equipment_id", "bag_id", "shipment_id", "warehouse_code", "kind", "status", "last_user_1", "last_user_2"]),
+        "transfer_points": rows(TransferPoint, ["code", "name", "warehouse_code"]),
+    }
+    body = _json.dumps(data, ensure_ascii=False, indent=2)
+    fname = "domovoy-backup-" + datetime.utcnow().strftime("%Y%m%d-%H%M") + ".json"
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @app.get("/api/health")

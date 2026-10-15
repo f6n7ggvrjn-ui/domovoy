@@ -28,6 +28,19 @@ function toast(msg, err = false) {
   el.className = "toast" + (err ? " err" : "");
   el.classList.remove("hidden");
   setTimeout(() => el.classList.add("hidden"), 3500);
+  if (err) playErrorBeep();
+}
+function playErrorBeep() {
+  try {
+    if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type = "square"; o.frequency.value = 220; g.gain.value = 0.12;
+    o.start();
+    setTimeout(() => { o.frequency.value = 160; }, 100);
+    setTimeout(() => { o.stop(); ctx.close(); }, 280);
+  } catch (_) {}
 }
 
 function logout() {
@@ -73,34 +86,32 @@ document.getElementById("btn-logout").onclick = logout;
 function navItems() {
   if (user.role === "admin") {
     return [
-      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История заказов"],
-      ["board", "Сборка"], ["bags", "Сумки"], ["shift", "Смена"], ["logistics", "Логистика"],
-      ["employees", "Сотрудники"], ["cells", "Ячейки"], ["points", "Точки"], ["warehouses", "Склады"],
-      ["missing", "Пропажи"], ["receive", "Приёмка"], ["eans", "EAN"], ["profile", "Профиль"],
+      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
+      ["shift", "Смена"], ["logistics", "Логистика"],
+      ["employees", "Сотрудники"], ["warehouses", "Склады"], ["missing", "Пропажи"],
+      ["settings", "Настройки"], ["qr", "QR"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "supervisor") {
     return [
-      ["home", "Главная"], ["lookup", "Объект"], ["issue", "Выдача"], ["cells", "Ячейки"],
+      ["home", "Главная"], ["lookup", "Объект"], ["issue", "Выдача"],
       ["missing", "Пропажи"], ["shift", "Смена"], ["logistics", "Логистика"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "warehouse") {
     return [
-      ["home", "Главная"], ["lookup", "Объект"], ["assemble", "Сборка"], ["issue", "Выдача"],
-      ["returnbag", "Возврат"], ["unpack", "Разбор"], ["receive", "Приёмка"],
-      ["logistics", "Логистика"], ["board", "Очередь"], ["whpick", "Склад"],
+      ["home", "Главная"], ["lookup", "Объект"], ["logistics", "Логистика"], ["board", "Очередь"],
     ];
   }
   return [["home", "Мои заказы"], ["orderHistory", "История заказов"], ["profile", "Профиль"]];
 }
 
 function render() {
-  document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role} · ск.${warehouseCode}`;
+  document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role}`;
   const nav = document.getElementById("nav");
   const items = navItems();
   // подстраницы логистики/склада не в меню — не сбрасывать на главную
-  const subPages = ["logSend", "logForm", "logReceive", "logTrack", "logHistory", "whpick"];
+  const subPages = ["logSend", "logForm", "logReceive", "logTrack", "logHistory", "whpick", "settings", "qr", "assemble", "issue", "unpack", "receive", "returnbag", "cells", "bags", "board", "eans", "points"];
   if (!items.find(i => i[0] === page) && !subPages.includes(page)) page = items[0][0];
   const logisticsSubs = ["logSend", "logForm", "logReceive", "logTrack", "logHistory"];
   nav.innerHTML = items.map(([id, label]) => {
@@ -108,7 +119,10 @@ function render() {
     return `<button class="${active ? "active" : ""}" data-p="${id}">${label}</button>`;
   }).join("");
   nav.querySelectorAll("button").forEach(b => {
-    b.onclick = () => { page = b.dataset.p; render(); };
+    b.onclick = () => {
+      if (b.dataset.p === "logistics") { openLogistics(); return; }
+      page = b.dataset.p; render();
+    };
   });
   const c = document.getElementById("content");
   c.innerHTML = "<p style='color:var(--muted)'>Загрузка...</p>";
@@ -135,6 +149,8 @@ async function renderPage() {
     case "returnbag": return renderReturnBag();
     case "orderHistory": return renderOrderHistory();
     case "profile": return renderProfile();
+    case "settings": return renderSettings();
+    case "qr": return renderQrTool();
     case "shift": return renderShift();
     case "logistics": return renderLogistics();
     case "warehouses": return renderWarehouses();
@@ -286,16 +302,27 @@ async function renderHome() {
       <div class="page-h"><h1>Склад</h1></div>
       <div id="signal-banner" class="card" style="border-color:var(--warning);color:var(--warning);display:none"></div>
       <div class="tsd-grid">
-        ${user.role !== "supervisor" ? `<button class="btn btn-primary btn-lg" onclick="page='assemble';render()">СБОРКА ОБОРУДОВАНИЯ</button>` : ""}
-        <button class="btn btn-accent btn-lg" onclick="page='issue';render()">ВЫДАЧА ИСПОЛНИТЕЛЮ</button>
+        ${user.role !== "supervisor" ? `<button class="btn btn-primary btn-lg" onclick="page='assemble';render()">СБОРКА</button>` : ""}
+        <button class="btn btn-accent btn-lg" onclick="page='issue';render()">ВЫДАЧА</button>
         ${user.role !== "supervisor" ? `
-        <button class="btn btn-lg" style="background:#3d2e10;color:var(--warning)" onclick="page='returnbag';render()">ВОЗВРАТ СУМКИ</button>
-        <button class="btn btn-lg" style="background:#334d40;color:var(--primary)" onclick="page='unpack';render()">РАЗБОР СУМКИ</button>
+        <button class="btn btn-lg" style="background:#3d2e10;color:var(--warning)" onclick="page='returnbag';render()">ВОЗВРАТ</button>
+        <button class="btn btn-lg" style="background:#334d40;color:var(--primary)" onclick="page='unpack';render()">РАЗБОР</button>
         <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='receive';render()">ПРИЁМКА</button>` : ""}
-        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='logistics';render()">ЛОГИСТИКА</button>
-        <button class="btn btn-ghost btn-lg" onclick="page='cells';render()">ЯЧЕЙКИ</button>
-        ${user.role === "admin" || user.role === "supervisor" ? `<button class="btn btn-ghost btn-lg" onclick="page='shift';render()">СМЕНА</button>` : ""}
-      </div>`;
+        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="openLogistics()">ЛОГИСТИКА</button>
+      </div>
+      ${user.role === "admin" ? `
+      <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:0.5rem">
+        <button class="btn btn-ghost btn-sm" onclick="page='shift';render()">Смена</button>
+        <button class="btn btn-ghost btn-sm" onclick="page='cells';render()">Ячейки</button>
+        <button class="btn btn-ghost btn-sm" onclick="page='bags';render()">Сумки</button>
+        <button class="btn btn-ghost btn-sm" onclick="page='board';render()">Очередь</button>
+        <button class="btn btn-ghost btn-sm" onclick="page='settings';render()">Настройки</button>
+        <button class="btn btn-ghost btn-sm" onclick="page='qr';render()">QR-коды</button>
+      </div>` : ""}
+      ${user.role === "supervisor" ? `
+      <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:0.5rem">
+        <button class="btn btn-ghost btn-sm" onclick="page='shift';render()">Смена</button>
+      </div>` : ""}`;
   }
   if (user.status === "blocked") {
     const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=" + encodeURIComponent(user.id);
@@ -1179,14 +1206,25 @@ window.whApplyScan = async () => {
 
 async function renderWarehouses() {
   const list = await api("/warehouses");
+  let stock = [];
+  try { stock = await api("/warehouses/stock"); } catch (_) {}
   return `
     <div class="page-h"><h1>Склады</h1></div>
     <div class="card">
-      <div class="card-title">Текущий склад: ${warehouseCode}</div>
-      <label>Переключить</label>
-      <select id="wh-switch" onchange="setWarehouse(this.value);toast('Склад '+this.value);render()">
-        ${list.map(w => `<option value="${w.code}" ${w.code===warehouseCode?"selected":""}>${w.code} — ${w.name}</option>`).join("")}
-      </select>
+      <div class="card-title">Остатки по складам</div>
+      ${stock.map(s => `
+        <div style="margin:0.75rem 0;padding-bottom:0.75rem;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <b>Склад ${s.code}</b>
+            <span><b>${s.count}</b> ед.</span>
+          </div>
+          <div style="font-size:0.85rem;color:var(--muted)">${s.name || ""}</div>
+          <ul class="item-list" style="margin-top:0.35rem">
+            ${(s.items || []).map(i => `<li><code>${i.id}</code> ${i.name || ""}
+              <span style="color:var(--muted)">${i.cell_code ? " · " + i.cell_code : ""}${i.status && i.status !== "in_cell" ? " · " + i.status : ""}</span>
+            </li>`).join("") || "<li style='color:var(--muted)'>пусто</li>"}
+          </ul>
+        </div>`).join("") || "<p style='color:var(--muted)'>Нет данных</p>"}
     </div>
     <div class="card">
       <div class="card-title">Добавить склад</div>
@@ -1250,10 +1288,45 @@ window.shiftUnmark = async (id) => {
   } catch (e) { toast(e.message, true); }
 };
 
+window.logWhConfirm = async () => {
+  const code = (document.getElementById("log-wh")?.value || "").trim();
+  if (!/^\d{6}$/.test(code)) { toast("Код склада: 6 цифр", true); return; }
+  try {
+    const list = await api("/warehouses");
+    if (!list.find(w => w.code === code)) { toast("Склад не найден", true); return; }
+    setWarehouse(code);
+    sessionStorage.setItem("dv_wh_confirmed", "1");
+    toast("Склад " + code);
+    page = "logistics";
+    render();
+  } catch (e) { toast(e.message, true); }
+};
+window.openLogistics = () => {
+
+  // всегда сначала скан склада
+  sessionStorage.removeItem("dv_wh_confirmed");
+  page = "logistics";
+  render();
+};
+
 async function renderLogistics() {
+  const confirmed = sessionStorage.getItem("dv_wh_confirmed") === "1" && warehouseCode;
+  if (!confirmed) {
+    return `
+      <div class="page-h"><h1>Логистика</h1>
+        <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <div class="scan-box">
+        <div>Отсканируйте код склада (6 цифр)</div>
+        <input id="log-wh" placeholder="001066"
+          onkeydown="if(event.key==='Enter')logWhConfirm()" />
+        <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="logWhConfirm()">Далее</button>
+      </div>`;
+  }
   const forming = await api("/logistics/forming?warehouse_code=" + encodeURIComponent(warehouseCode));
   return `
-    <div class="page-h"><h1>Логистика · ${warehouseCode}</h1></div>
+    <div class="page-h"><h1>Логистика · ${warehouseCode}</h1>
+      <button class="btn btn-ghost btn-sm" onclick="sessionStorage.removeItem('dv_wh_confirmed');page='logistics';render()">Сменить склад</button>
+    </div>
     <div class="tsd-grid">
       ${(user.role === "admin" || user.role === "supervisor") ? `
         <button class="btn btn-primary btn-lg" onclick="page='logSend';render()">Отправка поставки</button>
@@ -1477,6 +1550,74 @@ window.logViz = async (id) => {
     toast((await api("/logistics/visualize-shortage", { method: "POST", body: JSON.stringify({ shipment_id: id }) })).message);
     render();
   } catch (e) { toast(e.message, true); }
+};
+
+
+
+async function renderSettings() {
+  return `
+    <div class="page-h"><h1>Настройки</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+    <div class="card">
+      <div class="card-title">Справочники</div>
+      <button class="btn btn-ghost btn-block" onclick="page='eans';render()">EAN</button>
+      <button class="btn btn-ghost btn-block" onclick="page='points';render()">Точки передачи</button>
+      <button class="btn btn-ghost btn-block" onclick="page='cells';render()">Ячейки</button>
+      <button class="btn btn-ghost btn-block" onclick="page='bags';render()">Сумки</button>
+      <button class="btn btn-ghost btn-block" onclick="page='receive';render()">Приёмка</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Резервная копия</div>
+      <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">
+        Скачайте JSON со всеми данными. Храните у себя (на Free Render база может обнулиться).
+      </p>
+      <button class="btn btn-primary btn-block" onclick="downloadBackup()">Скачать бэкап</button>
+    </div>`;
+}
+window.downloadBackup = async () => {
+  try {
+    const res = await fetch("/api/admin/backup", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || "Ошибка бэкапа");
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "domovoy-backup-" + new Date().toISOString().slice(0,10) + ".json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast("Бэкап скачан");
+  } catch (e) { toast(e.message, true); }
+};
+
+async function renderQrTool() {
+  return `
+    <div class="page-h"><h1>QR-коды</h1>
+      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+    <div class="card">
+      <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">
+        Введите код (us… / dd… / sumka… / DY… / 6 цифр склада / 11 цифр поставки) — QR для экрана или печати.
+      </p>
+      <input id="qr-code" placeholder="us000003 или dd10000001"
+        onkeydown="if(event.key==='Enter')qrShow()" />
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="qrShow()">Показать QR</button>
+    </div>
+    <div id="qr-out" style="text-align:center;margin-top:1rem"></div>`;
+}
+window.qrShow = () => {
+  const code = (document.getElementById("qr-code")?.value || "").trim();
+  if (!code) { toast("Введите код", true); return; }
+  const url = "https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=12&data=" + encodeURIComponent(code);
+  document.getElementById("qr-out").innerHTML = `
+    <div class="card">
+      <img src="${url}" width="280" height="280" alt="QR"
+        style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />
+      <div style="font-size:1.25rem;font-weight:700;margin-top:1rem;letter-spacing:0.03em">${code}</div>
+      <p style="color:var(--muted);font-size:0.85rem;margin-top:0.5rem">Сделайте скрин или откройте картинку для печати</p>
+    </div>`;
 };
 
 
