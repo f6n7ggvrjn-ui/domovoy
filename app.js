@@ -99,10 +99,14 @@ function render() {
   document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role} · ск.${warehouseCode}`;
   const nav = document.getElementById("nav");
   const items = navItems();
-  if (!items.find(i => i[0] === page)) page = items[0][0];
-  nav.innerHTML = items.map(([id, label]) =>
-    `<button class="${page === id ? "active" : ""}" data-p="${id}">${label}</button>`
-  ).join("");
+  // подстраницы логистики/склада не в меню — не сбрасывать на главную
+  const subPages = ["logSend", "logForm", "logReceive", "logTrack", "logHistory", "whpick"];
+  if (!items.find(i => i[0] === page) && !subPages.includes(page)) page = items[0][0];
+  const logisticsSubs = ["logSend", "logForm", "logReceive", "logTrack", "logHistory"];
+  nav.innerHTML = items.map(([id, label]) => {
+    const active = page === id || (id === "logistics" && logisticsSubs.includes(page)) || (id === "whpick" && page === "whpick");
+    return `<button class="${active ? "active" : ""}" data-p="${id}">${label}</button>`;
+  }).join("");
   nav.querySelectorAll("button").forEach(b => {
     b.onclick = () => { page = b.dataset.p; render(); };
   });
