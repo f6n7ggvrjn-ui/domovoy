@@ -1002,13 +1002,30 @@ window.empSearch = async () => {
     const rows = await api("/employees/search?q=" + encodeURIComponent(q));
     const box = document.getElementById("emp-search-result");
     if (!rows.length) { box.innerHTML = "<p style='color:var(--muted)'>Не найден</p>"; return; }
-    box.innerHTML = rows.map(u => `
-      <div style="padding:0.5rem 0;border-bottom:1px solid var(--border)">
-        <b>${u.id}</b> · ${u.full_name}<br>
-        ${u.role_label} · ${u.status}
-        ${u.block_reason ? `<br><span style="color:var(--danger)">Причина блока: ${u.block_reason}</span>` : ""}
-        ${u.birth_date ? `<br>ДР: ${u.birth_date}` : ""}
-      </div>`).join("");
+    box.innerHTML = rows.map(u => {
+      const nameSafe = (u.full_name || "").replace(/'/g, "");
+      return `
+      <div style="padding:0.75rem 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.75rem;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:700;font-size:1.05rem">${u.full_name || "—"}</div>
+            <div style="margin-top:0.2rem"><code>${u.id}</code>
+              <span style="color:var(--muted)"> · ${u.role_label || u.role} · ${u.status}</span>
+            </div>
+            ${u.block_reason ? `<div style="color:var(--danger);font-size:0.85rem;margin-top:0.25rem">Блок: ${u.block_reason}</div>` : ""}
+            ${u.birth_date ? `<div style="color:var(--muted);font-size:0.85rem">ДР: ${u.birth_date}</div>` : ""}
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:0.35rem">
+            <button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${nameSafe}')">Изменить</button>
+            ${u.status !== "blocked" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empBlock('${u.id}')">Блокировать</button>` : ""}
+            ${u.status === "blocked" ? `<button class="btn btn-accent btn-sm" onclick="empUnblock('${u.id}')">Разблок</button>` : ""}
+            ${u.status === "fired" ? `<button class="btn btn-accent btn-sm" onclick="empRestore('${u.id}')">Восстановить</button>` : ""}
+            <button class="btn btn-ghost btn-sm" onclick="empHist('${u.id}')">История</button>
+            ${u.status !== "fired" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Увол.</button>` : ""}
+          </div>
+        </div>
+      </div>`;
+    }).join("");
   } catch (e) { toast(e.message, true); }
 };
 window.empRestore = async (id) => {
