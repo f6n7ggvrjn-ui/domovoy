@@ -1790,7 +1790,7 @@ def logistics_track(shipment_id: str, db: Session = Depends(get_db), user: User 
     }
 
 @app.post("/api/logistics/shipments")
-def create_shipment(data: ShipmentCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def create_shipment(data: ShipmentCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     sid = normalize(data.shipment_id)
     if not is_shipment_id(sid):
         raise HTTPException(400, "Номер поставки: 11 цифр")
@@ -1857,7 +1857,7 @@ def pack_item(data: ShipmentPackIn, db: Session = Depends(get_db), user: User = 
     return {"ok": True, "message": f"{eq.name} → поставка {sid}", "items_count": cnt, "equipment_id": eq.id}
 
 @app.post("/api/logistics/send")
-def send_shipment(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def send_shipment(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     sid = normalize(data.shipment_id)
     s = db.query(Shipment).filter(Shipment.id == sid).first()
     if not s or s.status != "forming":

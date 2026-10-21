@@ -1335,25 +1335,29 @@ async function renderLogistics() {
       <button class="btn btn-ghost btn-sm" onclick="sessionStorage.removeItem('dv_wh_confirmed');page='logistics';render()">Сменить склад</button>
     </div>
     <div class="tsd-grid">
+      ${user.role === "admin" ? `
+        <button class="btn btn-primary btn-lg" onclick="page='logSend';render()">Создать поставку</button>
+      ` : ""}
+      <button class="btn btn-primary btn-lg" onclick="page='logForm';render()">Собрать поставку</button>
+      <button class="btn btn-accent btn-lg" onclick="page='logReceive';render()">Принять поставку</button>
+      <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='logTrack';render()">Отследить</button>
       ${(user.role === "admin" || user.role === "supervisor" || user.role === "warehouse") ? `
-        <button class="btn btn-primary btn-lg" onclick="page='logSend';render()">Отправка поставки</button>
-        <button class="btn btn-accent btn-lg" onclick="page='logReceive';render()">Принять поставку</button>
-        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='logTrack';render()">Отследить</button>
         <button class="btn btn-ghost btn-lg" onclick="page='logHistory';render()">История поставок</button>
-      ` : `
-        <button class="btn btn-primary btn-lg" onclick="page='logForm';render()">Формирование поставок</button>
-        <button class="btn btn-accent btn-lg" onclick="page='logReceive';render()">Принять поставку</button>
-      `}
+      ` : ""}
     </div>
     ${forming.length ? `<div class="card" style="margin-top:1rem"><div class="card-title">Формируется сейчас</div>
       ${forming.map(s => `<div><code>${s.id}</code> → ${s.to_warehouse}: <b>${s.items_count}</b> ед.
-        ${(user.role==="admin"||user.role==="supervisor"||user.role==="warehouse")?` <button class="btn btn-sm btn-primary" onclick="logSendNow('${s.id}')">Отправить</button>`:""}
+        ${user.role==="admin"?` <button class="btn btn-sm btn-primary" onclick="logSendNow('${s.id}')">Отправить</button>`:""}
       </div>`).join("")}
     </div>` : ""}`;
 }
 
 // logSend page as dynamic via page switch - add cases
 async function renderLogSend() {
+  if (user.role !== "admin") {
+    toast("Создать поставку может только админ", true);
+    page = "logistics"; return renderLogistics();
+  }
   const whs = await api("/warehouses");
   let staff = [];
   try { staff = (await api("/employees")).filter(e => e.role === "supervisor" || e.role === "warehouse" || e.role === "admin"); } catch(_) {}
