@@ -14,13 +14,18 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: "Pixelify Sans", "Press Start 2P", system-ui, sans-serif;
+  font-family: "Pixelify Sans", system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
   -webkit-tap-highlight-color: transparent;
-  letter-spacing: 0.02em;
-  line-height: 1.45;
+  letter-spacing: 0.06em;
+  line-height: 1.55;
+  font-size: 16px;
+  font-weight: 500;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: unset;
+  text-rendering: geometricPrecision;
 }
 .screen { display: none; min-height: 100vh; }
 .screen.active { display: block; }
@@ -74,8 +79,8 @@ input, select {
 }
 .nav button {
   flex-shrink: 0; padding: 0.55rem 0.9rem; border: none; border-radius: 8px;
-  background: transparent; color: var(--muted); font-weight: 600; font-size: 0.85rem;
-  font-family: inherit;
+  background: transparent; color: var(--muted); font-weight: 600; font-size: 0.9rem;
+  font-family: inherit; letter-spacing: 0.05em;
 }
 .nav button.active { background: var(--primary); color: #0c1210; }
 .content { padding: 1rem; max-width: 900px; margin: 0 auto; }
@@ -128,3 +133,16 @@ th { background: #0c1210; color: var(--muted); font-size: 0.7rem; text-transform
 
 .cutoff { font-size: 1.4rem; font-weight: 800; color: var(--warning); }
 .cutoff.urgent { color: var(--danger); }
+
+/* читаемость пиксельного шрифта */
+table { font-size: 0.95rem; letter-spacing: 0.05em; border-collapse: collapse; width: 100%; }
+th, td { padding: 0.55rem 0.65rem; line-height: 1.5; vertical-align: middle; }
+th { letter-spacing: 0.08em; font-weight: 700; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; }
+td { font-weight: 500; }
+.btn-sm { letter-spacing: 0.05em; font-size: 0.9rem; padding: 0.45rem 0.8rem; }
+.btn-lg { letter-spacing: 0.08em; }
+.card-title { letter-spacing: 0.06em; line-height: 1.4; }
+.page-h h1 { letter-spacing: 0.07em; line-height: 1.35; font-weight: 700; }
+input, select { letter-spacing: 0.04em; font-weight: 500; }
+code, .mono { letter-spacing: 0.08em; font-weight: 600; }
+#user-label { letter-spacing: 0.04em; font-size: 0.9rem; }
