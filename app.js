@@ -89,7 +89,7 @@ function navItems() {
       ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
       ["shift", "Смена"], ["logistics", "Логистика"],
       ["employees", "Сотрудники"], ["warehouses", "Склады"], ["missing", "Пропажи"],
-      ["settings", "Настройки"], ["qr", "QR"], ["profile", "Профиль"],
+      ["settings", "Настройки"], ["qr", "Этикетки"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "supervisor") {
@@ -1612,30 +1612,176 @@ window.downloadBackup = async () => {
 
 async function renderQrTool() {
   return `
-    <div class="page-h"><h1>QR-коды</h1>
+    <div class="page-h"><h1>Этикетки / QR</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div class="card">
-      <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">
-        Введите код (us… / dd… / sumka… / DY… / 6 цифр склада / 11 цифр поставки) — QR для экрана или печати.
-      </p>
-      <input id="qr-code" placeholder="us000003 или dd10000001"
-        onkeydown="if(event.key==='Enter')qrShow()" />
-      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="qrShow()">Показать QR</button>
+      <div class="card-title">Шаблон этикетки</div>
+      <label>Тип</label>
+      <select id="lbl-type" onchange="lblTypeChange()">
+        <option value="shipment">Поставка (штрихкод)</option>
+        <option value="equipment">Оборудование dd…</option>
+        <option value="bag">Сумка sumka…</option>
+        <option value="user">Сотрудник us…</option>
+        <option value="cell">Ячейка DY…</option>
+        <option value="warehouse">Склад (6 цифр)</option>
+        <option value="qr_only">Просто QR по коду</option>
+      </select>
+      <div id="lbl-fields"></div>
+      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="lblBuild()">Собрать этикетку</button>
     </div>
-    <div id="qr-out" style="text-align:center;margin-top:1rem"></div>`;
+    <div id="qr-out" style="margin-top:1rem"></div>`;
 }
-window.qrShow = () => {
-  const code = (document.getElementById("qr-code")?.value || "").trim();
-  if (!code) { toast("Введите код", true); return; }
-  const url = "https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=12&data=" + encodeURIComponent(code);
-  document.getElementById("qr-out").innerHTML = `
-    <div class="card">
-      <img src="${url}" width="280" height="280" alt="QR"
-        style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />
-      <div style="font-size:1.25rem;font-weight:700;margin-top:1rem;letter-spacing:0.03em">${code}</div>
-      <p style="color:var(--muted);font-size:0.85rem;margin-top:0.5rem">Сделайте скрин или откройте картинку для печати</p>
-    </div>`;
+window.lblTypeChange = () => {
+  const t = document.getElementById("lbl-type")?.value || "shipment";
+  const box = document.getElementById("lbl-fields");
+  if (!box) return;
+  if (t === "shipment") {
+    box.innerHTML = `
+      <label>Номер поставки (11–13 цифр)</label>
+      <input id="lbl-code" placeholder="011235462730" />
+      <label>Куда (код склада 6 цифр)</label>
+      <input id="lbl-extra" placeholder="002066" />`;
+  } else if (t === "equipment") {
+    box.innerHTML = `
+      <label>Код dd…</label>
+      <input id="lbl-code" placeholder="dd10000001" />
+      <label>Название (необязательно)</label>
+      <input id="lbl-extra" placeholder="Пылесос №1" />`;
+  } else if (t === "bag") {
+    box.innerHTML = `
+      <label>Код сумки</label>
+      <input id="lbl-code" placeholder="sumka14024" />
+      <label>Подпись (необязательно)</label>
+      <input id="lbl-extra" placeholder="Сумка" />`;
+  } else if (t === "user") {
+    box.innerHTML = `
+      <label>Учётка us…</label>
+      <input id="lbl-code" placeholder="us000003" />
+      <label>ФИО (необязательно)</label>
+      <input id="lbl-extra" placeholder="Иванов И.И." />`;
+  } else if (t === "cell") {
+    box.innerHTML = `
+      <label>Код ячейки</label>
+      <input id="lbl-code" placeholder="DY0010661/2" />
+      <label>Подпись</label>
+      <input id="lbl-extra" placeholder="Ячейка" />`;
+  } else if (t === "warehouse") {
+    box.innerHTML = `
+      <label>Код склада</label>
+      <input id="lbl-code" placeholder="001066" />
+      <label>Название</label>
+      <input id="lbl-extra" placeholder="Основной склад" />`;
+  } else {
+    box.innerHTML = `
+      <label>Любой код</label>
+      <input id="lbl-code" placeholder="код" onkeydown="if(event.key==='Enter')lblBuild()" />`;
+  }
 };
+// init fields after render
+setTimeout(() => { if (document.getElementById("lbl-type")) lblTypeChange(); }, 30);
+
+function lblNow() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth()+1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+function lblBarcodeUrl(text) {
+  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(text) + "&scale=3&height=12&includetext=false";
+}
+function lblQrUrl(text, size) {
+  return "https://api.qrserver.com/v1/create-qr-code/?size=" + (size||200) + "x" + (size||200) + "&margin=8&data=" + encodeURIComponent(text);
+}
+
+window.lblBuild = () => {
+  const type = document.getElementById("lbl-type")?.value || "qr_only";
+  const code = (document.getElementById("lbl-code")?.value || "").trim();
+  const extra = (document.getElementById("lbl-extra")?.value || "").trim();
+  if (!code) { toast("Введите код", true); return; }
+  const out = document.getElementById("qr-out");
+  const when = lblNow();
+
+  if (type === "shipment") {
+    const dest = extra || "------";
+    out.innerHTML = `
+      <div class="card" style="background:#111;padding:0.5rem">
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.5rem">Превью этикетки поставки — скачайте или распечатайте</p>
+        <div id="label-print-area" style="background:#fff;color:#000;padding:12px 16px;border-radius:4px;max-width:420px;margin:0 auto;font-family:Arial,sans-serif">
+          <div style="text-align:center">
+            <img src="${lblBarcodeUrl(code)}" alt="bc" style="width:100%;max-height:48px;object-fit:contain" />
+          </div>
+          <div style="text-align:center;font-size:18px;font-weight:700;letter-spacing:0.04em;margin-top:6px">${code}</div>
+          <div style="text-align:center;font-size:13px;margin-top:2px">${when}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 4px 10px">
+            <div style="font-size:28px;font-weight:800">Куда: ${dest}</div>
+            <div style="text-align:center;line-height:1.15">
+              <div style="font-size:11px;font-weight:700;color:#1a3a6b">ДОМОВОЙ</div>
+              <div style="font-size:8px;color:#2a7a3a">всё для вашего дома</div>
+            </div>
+          </div>
+          <div style="text-align:center;font-size:16px;font-weight:700;letter-spacing:0.04em;margin-bottom:4px">${code}</div>
+          <div style="text-align:center">
+            <img src="${lblBarcodeUrl(code)}" alt="bc2" style="width:100%;max-height:48px;object-fit:contain" />
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="lblPrint()">Печать</button>
+          <button class="btn btn-accent" onclick="lblCopy('${code}')">Копировать номер</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  if (type === "qr_only" || type === "equipment" || type === "bag" || type === "user" || type === "cell" || type === "warehouse") {
+    const titleMap = {
+      equipment: "Оборудование", bag: "Сумка", user: "Сотрудник",
+      cell: "Ячейка", warehouse: "Склад", qr_only: "Код",
+    };
+    const title = titleMap[type] || "Код";
+    const sub = extra || "";
+    out.innerHTML = `
+      <div class="card" style="background:#111;padding:0.5rem">
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.5rem">Этикетка — скачайте скрин или печать</p>
+        <div id="label-print-area" style="background:#fff;color:#000;padding:16px;border-radius:4px;max-width:320px;margin:0 auto;font-family:Arial,sans-serif;text-align:center">
+          <div style="font-size:11px;font-weight:700;color:#1a3a6b;margin-bottom:4px">ДОМОВОЙ · ${title}</div>
+          <img src="${lblQrUrl(code, 220)}" width="220" height="220" alt="QR"
+            style="display:block;margin:8px auto;background:#fff" />
+          <div style="font-size:20px;font-weight:800;letter-spacing:0.03em;margin-top:8px">${code}</div>
+          ${sub ? `<div style="font-size:14px;margin-top:4px">${sub}</div>` : ""}
+          <div style="font-size:11px;color:#666;margin-top:8px">${when}</div>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="lblPrint()">Печать</button>
+          <button class="btn btn-accent" onclick="lblCopy('${code}')">Копировать код</button>
+        </div>
+      </div>`;
+  }
+};
+
+window.lblCopy = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Скопировано: " + text);
+  } catch (_) {
+    prompt("Скопируйте:", text);
+  }
+};
+window.lblPrint = () => {
+  const area = document.getElementById("label-print-area");
+  if (!area) { toast("Сначала соберите этикетку", true); return; }
+  const w = window.open("", "_blank", "width=480,height=640");
+  if (!w) { toast("Разрешите всплывающие окна для печати", true); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Этикетка Домовой</title>
+    <style>
+      @page { margin: 8mm; }
+      body { margin: 0; display: flex; justify-content: center; align-items: flex-start; background: #fff; }
+      @media print { body { margin: 0; } }
+    </style></head><body>${area.outerHTML}
+    <script>window.onload=function(){setTimeout(function(){window.print();},400);}</script>
+    </body></html>`);
+  w.document.close();
+};
+// backward compat
+window.qrShow = () => lblBuild();
 
 
 function playBeep() {
