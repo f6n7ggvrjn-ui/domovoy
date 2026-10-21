@@ -92,15 +92,11 @@ function navItems() {
       ["settings", "Настройки"], ["qr", "QR"], ["profile", "Профиль"],
     ];
   }
-  if (user.role === "supervisor") {
-    return [
-      ["home", "Главная"], ["lookup", "Объект"], ["issue", "Выдача"],
-      ["missing", "Пропажи"], ["shift", "Смена"], ["logistics", "Логистика"], ["profile", "Профиль"],
-    ];
-  }
-  if (user.role === "warehouse") {
+  if (user.role === "supervisor" || user.role === "warehouse") {
+    // старший смены = все складские операции
     return [
       ["home", "Главная"], ["lookup", "Объект"], ["logistics", "Логистика"], ["board", "Очередь"],
+      ["shift", "Смена"], ["missing", "Пропажи"], ["profile", "Профиль"],
     ];
   }
   return [["home", "Мои заказы"], ["orderHistory", "История заказов"], ["profile", "Профиль"]];
@@ -297,32 +293,27 @@ async function renderOrderHistory() {
 }
 
 async function renderHome() {
-  if (user.role === "warehouse" || user.role === "admin" || user.role === "supervisor") {
+  if (user.role === "supervisor" || user.role === "warehouse" || user.role === "admin") {
+    const isAdmin = user.role === "admin";
     return `
       <div class="page-h"><h1>Склад</h1></div>
       <div id="signal-banner" class="card" style="border-color:var(--warning);color:var(--warning);display:none"></div>
       <div class="tsd-grid">
-        ${user.role !== "supervisor" ? `<button class="btn btn-primary btn-lg" onclick="page='assemble';render()">СБОРКА</button>` : ""}
+        <button class="btn btn-primary btn-lg" onclick="page='assemble';render()">СБОРКА</button>
         <button class="btn btn-accent btn-lg" onclick="page='issue';render()">ВЫДАЧА</button>
-        ${user.role !== "supervisor" ? `
         <button class="btn btn-lg" style="background:#3d2e10;color:var(--warning)" onclick="page='returnbag';render()">ВОЗВРАТ</button>
         <button class="btn btn-lg" style="background:#334d40;color:var(--primary)" onclick="page='unpack';render()">РАЗБОР</button>
-        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='receive';render()">ПРИЁМКА</button>` : ""}
+        <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='receive';render()">ПРИЁМКА</button>
         <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="openLogistics()">ЛОГИСТИКА</button>
       </div>
-      ${user.role === "admin" ? `
       <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:0.5rem">
         <button class="btn btn-ghost btn-sm" onclick="page='shift';render()">Смена</button>
-        <button class="btn btn-ghost btn-sm" onclick="page='cells';render()">Ячейки</button>
-        <button class="btn btn-ghost btn-sm" onclick="page='bags';render()">Сумки</button>
         <button class="btn btn-ghost btn-sm" onclick="page='board';render()">Очередь</button>
+        ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="page='cells';render()">Ячейки</button>
+        <button class="btn btn-ghost btn-sm" onclick="page='bags';render()">Сумки</button>
         <button class="btn btn-ghost btn-sm" onclick="page='settings';render()">Настройки</button>
-        <button class="btn btn-ghost btn-sm" onclick="page='qr';render()">QR-коды</button>
-      </div>` : ""}
-      ${user.role === "supervisor" ? `
-      <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:0.5rem">
-        <button class="btn btn-ghost btn-sm" onclick="page='shift';render()">Смена</button>
-      </div>` : ""}`;
+        <button class="btn btn-ghost btn-sm" onclick="page='qr';render()">QR</button>` : ""}
+      </div>`;
   }
   if (user.status === "blocked") {
     const qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=10&data=" + encodeURIComponent(user.id);
@@ -916,7 +907,6 @@ async function renderEmployees() {
       <label>Пароль для входа</label><input id="emp-pass" type="text" placeholder="минимум 4 символа" />
       <label>Роль</label>
       <select id="emp-role">
-        <option value="warehouse">Сотрудник склада</option>
         <option value="cleaner">Клинер</option>
         <option value="handyman">Мастер на все руки</option>
         <option value="supervisor">Старший смены</option>
@@ -961,7 +951,7 @@ window.empEdit = async (id, name) => {
   const nn = prompt("ФИО:", name);
   if (nn === null) return;
   const pwd = prompt("Новый пароль (пусто = не менять):");
-  const role = prompt("Роль (warehouse/cleaner/handyman/admin, пусто = не менять):");
+  const role = prompt("Роль (supervisor/cleaner/handyman/admin, пусто = не менять):");
   try {
     const body = { full_name: nn };
     if (pwd) body.password = pwd;
@@ -1345,7 +1335,7 @@ async function renderLogistics() {
       <button class="btn btn-ghost btn-sm" onclick="sessionStorage.removeItem('dv_wh_confirmed');page='logistics';render()">Сменить склад</button>
     </div>
     <div class="tsd-grid">
-      ${(user.role === "admin" || user.role === "supervisor") ? `
+      ${(user.role === "admin" || user.role === "supervisor" || user.role === "warehouse") ? `
         <button class="btn btn-primary btn-lg" onclick="page='logSend';render()">Отправка поставки</button>
         <button class="btn btn-accent btn-lg" onclick="page='logReceive';render()">Принять поставку</button>
         <button class="btn btn-lg" style="background:#1e2e26;color:var(--accent);border:1px solid var(--border)" onclick="page='logTrack';render()">Отследить</button>
@@ -1357,7 +1347,7 @@ async function renderLogistics() {
     </div>
     ${forming.length ? `<div class="card" style="margin-top:1rem"><div class="card-title">Формируется сейчас</div>
       ${forming.map(s => `<div><code>${s.id}</code> → ${s.to_warehouse}: <b>${s.items_count}</b> ед.
-        ${(user.role==="admin"||user.role==="supervisor")?` <button class="btn btn-sm btn-primary" onclick="logSendNow('${s.id}')">Отправить</button>`:""}
+        ${(user.role==="admin"||user.role==="supervisor"||user.role==="warehouse")?` <button class="btn btn-sm btn-primary" onclick="logSendNow('${s.id}')">Отправить</button>`:""}
       </div>`).join("")}
     </div>` : ""}`;
 }
@@ -1366,7 +1356,7 @@ async function renderLogistics() {
 async function renderLogSend() {
   const whs = await api("/warehouses");
   let staff = [];
-  try { staff = (await api("/employees")).filter(e => e.role === "warehouse" || e.role === "supervisor"); } catch(_) {}
+  try { staff = (await api("/employees")).filter(e => e.role === "supervisor" || e.role === "warehouse" || e.role === "admin"); } catch(_) {}
   return `
     <div class="page-h"><h1>Отправка поставки</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='logistics';render()">Назад</button></div>
@@ -1651,7 +1641,7 @@ function playBeep() {
 let signalTimer = null;
 function startSignalPoll() {
   if (signalTimer) clearInterval(signalTimer);
-  if (!user || (user.role !== "warehouse" && user.role !== "admin")) return;
+  if (!user || (user.role !== "supervisor" && user.role !== "warehouse" && user.role !== "admin")) return;
   let known = new Set();
   signalTimer = setInterval(async () => {
     try {

@@ -17,10 +17,10 @@ security = HTTPBearer()
 
 ROLE_LABELS = {
     "admin": "Админ",
-    "warehouse": "Сотрудник склада",
+    "supervisor": "Старший смены",
     "cleaner": "Клинер",
     "handyman": "Мастер на все руки",
-    "supervisor": "Старший смены",
+    "warehouse": "Старший смены",  # старая роль = те же права, что supervisor
 }
 
 def hash_password(p: str) -> str:
