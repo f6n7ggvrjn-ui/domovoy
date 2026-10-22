@@ -378,8 +378,8 @@ def search_employee(q: str, db: Session = Depends(get_db), user: User = Depends(
 
 @app.post("/api/employees")
 def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    if data.role not in ("cleaner", "handyman", "admin", "supervisor", "warehouse"):
-        raise HTTPException(400, "Роль: supervisor / cleaner / handyman / admin")
+    if data.role not in ("cleaner", "handyman", "admin", "supervisor", "warehouse", "order_manager"):
+        raise HTTPException(400, "Роль: supervisor / order_manager / cleaner / handyman / admin")
     if data.id and data.id.strip():
         nid = normalize(data.id).lower()
         if not is_user(nid):
@@ -413,7 +413,7 @@ def update_employee(emp_id: str, data: EmployeeUpdateIn, db: Session = Depends(g
     if data.birth_date is not None and data.birth_date != u.birth_date:
         log_user_change(db, u.id, user.id, "birth_date", u.birth_date, data.birth_date)
         u.birth_date = data.birth_date
-    if data.role is not None and data.role in ("warehouse", "cleaner", "handyman", "admin", "supervisor") and data.role != u.role:
+    if data.role is not None and data.role in ("warehouse", "cleaner", "handyman", "admin", "supervisor", "order_manager") and data.role != u.role:
         log_user_change(db, u.id, user.id, "role", u.role, data.role)
         u.role = data.role
     if data.status is not None and data.status in ("active", "blocked", "fired") and data.status != u.status:
@@ -1073,21 +1073,25 @@ def _next_order_id(db: Session) -> str:
     return f"ORD{n:05d}"
 
 @app.post("/api/orders")
-def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager"))):
     if not data.address or not data.address.strip():
         raise HTTPException(400, "Укажите адрес")
-    if data.executor_id:
+    executor_id = None
+    # назначать исполнителя могут только админ и старший (не менеджер)
+    if data.executor_id and user.role in ("admin", "supervisor", "warehouse"):
         ex = db.query(User).filter(User.id == normalize(data.executor_id).lower()).first()
         if not ex or ex.role not in ("cleaner", "handyman"):
             raise HTTPException(400, "Исполнитель: клинер или мастер")
+        executor_id = normalize(data.executor_id).lower()
     oid = _next_order_id(db)
     status = "awaiting_assembly" if data.send_to_assembly else "new"
     order = Order(
         id=oid, client_name=data.client_name, address=data.address.strip(),
         cleaning_type=data.cleaning_type, object_info=data.object_info,
-        executor_id=normalize(data.executor_id).lower() if data.executor_id else None,
+        executor_id=executor_id,
         status=status, cutoff_minutes=data.cutoff_minutes or 10,
         signal_sent=bool(data.send_to_assembly), created_at=datetime.utcnow(),
+        created_by=user.id,
     )
     db.add(order)
     log_op(db, "order_created", user.id, order_id=oid)
@@ -1096,7 +1100,7 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
             "message": f"Заказ {order.id} " + ("на сборку" if data.send_to_assembly else "создан")}
 
 @app.post("/api/orders/{order_id}/send-to-assembly")
-def send_to_assembly(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def send_to_assembly(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager"))):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
@@ -1176,6 +1180,12 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
             q = q.filter(Order.status == "done", Order.completed_at >= start)
         else:
             q = q.filter(Order.status != "done")
+    elif user.role == "order_manager":
+        q = q.filter(Order.created_by == user.id)
+        if scope == "history":
+            q = q.filter(Order.status == "done")
+        elif scope == "active":
+            q = q.filter(Order.status != "done")
     else:
         if scope == "history":
             q = q.filter(Order.status == "done")
@@ -1195,6 +1205,7 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
             "transfer_point": bag.transfer_point if bag else None,
             "completed_at": o.completed_at.isoformat() if o.completed_at else None,
             "completed_by": o.completed_by,
+            "created_by": o.created_by,
             "created_at": o.created_at.isoformat() if o.created_at else None,
         })
     return result

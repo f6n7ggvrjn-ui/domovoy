@@ -18,6 +18,7 @@ security = HTTPBearer()
 ROLE_LABELS = {
     "admin": "Админ",
     "supervisor": "Старший смены",
+    "order_manager": "Менеджер обработки заказов",
     "cleaner": "Клинер",
     "handyman": "Мастер на все руки",
     "warehouse": "Старший смены",  # старая роль = те же права, что supervisor

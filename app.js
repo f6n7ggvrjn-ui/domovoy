@@ -93,10 +93,16 @@ function navItems() {
     ];
   }
   if (user.role === "supervisor" || user.role === "warehouse") {
-    // старший смены = все складские операции
+    // старший смены = склад + назначение исполнителей в заказах
     return [
-      ["home", "Главная"], ["lookup", "Объект"], ["logistics", "Логистика"], ["board", "Очередь"],
+      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"],
+      ["logistics", "Логистика"], ["board", "Очередь"],
       ["shift", "Смена"], ["missing", "Пропажи"], ["profile", "Профиль"],
+    ];
+  }
+  if (user.role === "order_manager") {
+    return [
+      ["orders", "Заказы"], ["orderHistory", "История"], ["profile", "Профиль"],
     ];
   }
   return [["home", "Мои заказы"], ["orderHistory", "История заказов"], ["profile", "Профиль"]];
@@ -524,7 +530,7 @@ function showUnpackUI() {
     </div>
     <button class="btn btn-danger btn-block" style="margin-top:0.5rem" onclick="unpDamage()">Зафиксировать повреждение</button>
     <button class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="unpEmpty()">
-      Всё размещено — запустить расследование
+      Сумка пуста
     </button>
     <div id="unp-extra"></div>`;
   setTimeout(() => { const el = document.getElementById("unp-eq"); if (el) el.focus(); }, 50);
@@ -650,7 +656,7 @@ window.unpEmpty = async () => {
         <b>Не хватает в сумке:</b>
         <ul class="item-list">${r.missing.map(m => `<li>${m.name} <code>${m.id}</code></li>`).join("")}</ul>
         <button class="btn btn-danger btn-block" onclick="unpInvest()">
-          Сумка пуста — запустить расследование
+          Сумка пуста
         </button>
       </div>`;
   } catch (e) { toast(e.message, true); }
@@ -822,9 +828,12 @@ window.bagDelete = async (id) => {
 
 async function renderOrdersAdmin() {
   const orders = await api("/orders?scope=active");
+  const canAssign = user.role === "admin" || user.role === "supervisor" || user.role === "warehouse";
   let emps = [];
-  try { emps = await api("/shift/executors?warehouse_code=" + encodeURIComponent(warehouseCode)); } catch(_) {
-    emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman");
+  if (canAssign) {
+    try { emps = await api("/shift/executors?warehouse_code=" + encodeURIComponent(warehouseCode)); } catch(_) {
+      emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman");
+    }
   }
   return `
     <div class="page-h"><h1>Заказы</h1></div>
@@ -834,8 +843,8 @@ async function renderOrdersAdmin() {
       <label>Адрес *</label><input id="ord-addr" placeholder="ул. Ленина, 7" />
       <label>Информация по объекту</label><input id="ord-info" placeholder="домофон, этаж, парковка…" />
       <label>Тип уборки</label><input id="ord-type" />
-      <label>Исполнитель</label>
-      <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>
+      ${canAssign ? `<label>Исполнитель</label>
+      <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>` : `<p style="color:var(--muted);font-size:0.9rem;margin:0.5rem 0">Исполнителя назначает админ или старший смены</p>`}
       <label>Cut off</label>
       <select id="ord-cut"><option value="10">10</option><option value="15">15</option><option value="20">20</option><option value="30">30</option></select>
       <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
@@ -851,20 +860,21 @@ async function renderOrdersAdmin() {
           <td>${o.executor_id || "—"}</td>
           <td style="white-space:nowrap">
             ${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
-            ${o.status === "completion_pending" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
-            ${!["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить</button>` : ""}
+            ${o.status === "completion_pending" && user.role === "admin" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
+            ${canAssign && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>`;
 }
 window.ordCreate = async (send) => {
   try {
+    const execEl = document.getElementById("ord-exec");
     const r = await api("/orders", { method: "POST", body: JSON.stringify({
       client_name: document.getElementById("ord-client").value.trim() || null,
       address: document.getElementById("ord-addr").value.trim(),
       object_info: document.getElementById("ord-info").value.trim() || null,
       cleaning_type: document.getElementById("ord-type").value.trim() || null,
-      executor_id: document.getElementById("ord-exec").value || null,
+      executor_id: execEl ? (execEl.value || null) : null,
       cutoff_minutes: parseInt(document.getElementById("ord-cut").value, 10),
       send_to_assembly: send,
     })});
@@ -910,6 +920,7 @@ async function renderEmployees() {
         <option value="cleaner">Клинер</option>
         <option value="handyman">Мастер на все руки</option>
         <option value="supervisor">Старший смены</option>
+        <option value="order_manager">Менеджер обработки заказов</option>
         <option value="admin">Админ</option>
       </select>
       <button class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
@@ -951,7 +962,7 @@ window.empEdit = async (id, name) => {
   const nn = prompt("ФИО:", name);
   if (nn === null) return;
   const pwd = prompt("Новый пароль (пусто = не менять):");
-  const role = prompt("Роль (supervisor/cleaner/handyman/admin, пусто = не менять):");
+  const role = prompt("Роль (supervisor/order_manager/cleaner/handyman/admin, пусто = не менять):");
   try {
     const body = { full_name: nn };
     if (pwd) body.password = pwd;
@@ -1218,6 +1229,12 @@ async function renderWarehouses() {
   return `
     <div class="page-h"><h1>Склады</h1></div>
     <div class="card">
+      <div class="card-title">Создать склад</div>
+      <label>Код (6 цифр)</label><input id="wh-code" placeholder="001066" />
+      <label>Название</label><input id="wh-name" placeholder="Основной склад" />
+      <button class="btn btn-primary btn-block" onclick="whAdd()">Сохранить</button>
+    </div>
+    <div class="card">
       <div class="card-title">Остатки по складам</div>
       ${stock.map(s => `
         <div style="margin:0.75rem 0;padding-bottom:0.75rem;border-bottom:1px solid var(--border)">
@@ -1232,12 +1249,6 @@ async function renderWarehouses() {
             </li>`).join("") || "<li style='color:var(--muted)'>пусто</li>"}
           </ul>
         </div>`).join("") || "<p style='color:var(--muted)'>Нет данных</p>"}
-    </div>
-    <div class="card">
-      <div class="card-title">Добавить склад</div>
-      <label>Код (6 цифр)</label><input id="wh-code" placeholder="001066" />
-      <label>Название</label><input id="wh-name" placeholder="Основной склад" />
-      <button class="btn btn-primary btn-block" onclick="whAdd()">Сохранить</button>
     </div>
     ${list.map(w => `
       <div class="card" style="display:flex;justify-content:space-between;align-items:center">
