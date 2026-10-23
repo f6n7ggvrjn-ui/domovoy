@@ -1150,6 +1150,42 @@ def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = 
     db.commit()
     return {"ok": True, "message": f"Заказ {order.id} завершён"}
 
+
+@app.post("/api/orders/{order_id}/cancel")
+def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager", "supervisor"))):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Не найден")
+    if order.status in ("done", "cancelled"):
+        raise HTTPException(400, "Заказ уже завершён или отменён")
+    if user.role == "order_manager" and order.created_by != user.id:
+        raise HTTPException(403, "Можно отменять только свои заказы")
+
+    if order.bag_id:
+        bag = db.query(Bag).filter(Bag.id == order.bag_id).first()
+        if bag:
+            items = db.query(Equipment).filter(Equipment.bag_id == bag.id).count()
+            bag.order_id = None
+            if bag.status in ("assembling", "ready", "at_transfer"):
+                if items > 0:
+                    # сумка с оборудованием — ждёт разбора, не на заказе
+                    bag.status = "ready"
+                    bag.transfer_point = None
+                else:
+                    bag.status = "free"
+                    bag.assembled_by = None
+                    bag.assembly_started_at = None
+                    bag.transfer_point = None
+            # issued — сумка у исполнителя, разбор потом; только отвязать заказ
+
+    order.status = "cancelled"
+    order.completed_at = datetime.utcnow()
+    order.completed_by = user.id
+    order.bag_id = None
+    log_op(db, "order_cancelled", user.id, order_id=order.id)
+    db.commit()
+    return {"ok": True, "message": f"Заказ {order.id} отменён"}
+
 @app.post("/api/orders/{order_id}/reassign")
 def reassign_order(order_id: str, data: ReassignIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
     order = db.query(Order).filter(Order.id == order_id).first()
@@ -1183,23 +1219,25 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
     if user.role in ("cleaner", "handyman"):
         q = q.filter(Order.executor_id == user.id)
         if scope == "history":
-            # current month completed
             now = datetime.utcnow()
             start = datetime(now.year, now.month, 1)
-            q = q.filter(Order.status == "done", Order.completed_at >= start)
+            q = q.filter(
+                ((Order.status == "done") & (Order.completed_at >= start)) |
+                (Order.status == "cancelled")
+            )
         else:
-            q = q.filter(Order.status != "done")
+            q = q.filter(~Order.status.in_(["done", "cancelled"]))
     elif user.role == "order_manager":
         q = q.filter(Order.created_by == user.id)
         if scope == "history":
-            q = q.filter(Order.status == "done")
+            q = q.filter(Order.status.in_(["done", "cancelled"]))
         elif scope == "active":
-            q = q.filter(Order.status != "done")
+            q = q.filter(~Order.status.in_(["done", "cancelled"]))
     else:
         if scope == "history":
-            q = q.filter(Order.status == "done")
+            q = q.filter(Order.status.in_(["done", "cancelled"]))
         elif scope == "active":
-            q = q.filter(Order.status != "done")
+            q = q.filter(~Order.status.in_(["done", "cancelled"]))
     rows = list(q.all())
     # активные — ближайшее время заказа сверху
     if scope != "history":

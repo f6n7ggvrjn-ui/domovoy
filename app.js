@@ -865,6 +865,7 @@ async function renderOrdersAdmin() {
             ${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
             ${o.status === "completion_pending" && user.role === "admin" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
             ${canAssign && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}
+            ${(user.role === "admin" || user.role === "order_manager" || user.role === "supervisor") && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>`;
@@ -888,6 +889,13 @@ window.ordCreate = async (send) => {
 window.ordSend = async (id) => {
   try { toast((await api("/orders/" + id + "/send-to-assembly", { method: "POST" })).message); playBeep(); render(); }
   catch (e) { toast(e.message, true); }
+};
+window.ordCancel = async (id) => {
+  if (!confirm("Отменить заказ " + id + "?\nОн попадёт в историю со статусом «Отменён».")) return;
+  try {
+    toast((await api("/orders/" + id + "/cancel", { method: "POST" })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
 };
 window.ordConfirm = async (id) => {
   try { toast((await api("/orders/" + id + "/confirm-complete", { method: "POST" })).message); render(); }
