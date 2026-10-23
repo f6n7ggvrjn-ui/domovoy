@@ -369,9 +369,9 @@ async function renderAssemble() {
     <div id="asm-area">
       <p style="color:var(--muted);margin-bottom:0.75rem">Сумка должна быть готова за 30 мин до времени заказа. После дедлайна — опоздание</p>
       ${waiting.map(o => `
-        <div class="card" style="cursor:pointer" onclick="asmPickOrder('${o.order_id}')">
+        <div class="card" style="cursor:pointer" onclick="asmPickOrder('${o.order_id || o.id}')">
           <div style="display:flex;justify-content:space-between">
-            <b>Заказ ${o.order_id}</b>
+            <b>Заказ ${o.order_id || o.id}</b>
             <span class="status ${o.is_late ? "status-bad" : "status-warn"}">${o.status_label}</span>
           </div>
           <div style="margin-top:0.4rem">${o.address || ""}</div>
@@ -395,8 +395,15 @@ window.asmPickOrder = (orderId) => {
 };
 window.asmStart = async () => {
   try {
+    if (!asm.orderId || asm.orderId === "undefined") {
+      toast("Сначала выберите заказ из списка", true);
+      page = "assemble"; render();
+      return;
+    }
+    const bag = document.getElementById("scan-bag").value.trim();
+    if (!bag) { toast("Отсканируйте сумку", true); return; }
     const r = await api("/assembly/start", {
-      method: "POST", body: JSON.stringify({ bag_id: document.getElementById("scan-bag").value.trim(), order_id: asm.orderId }),
+      method: "POST", body: JSON.stringify({ bag_id: bag, order_id: asm.orderId }),
     });
     asm.bagId = r.bag_id;
     toast(r.message);
@@ -768,7 +775,7 @@ async function renderBoard() {
       <thead><tr><th>Время</th><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Сумка</th><th>Готовность</th></tr></thead>
       <tbody>${rows.map(r => `
         <tr>
-          <td>${r.order_id}</td>
+          <td>${r.order_id || r.id}</td>
           <td>${r.address || ""}${r.object_info ? "<br><small>" + r.object_info + "</small>" : ""}</td>
           <td><span class="status ${r.is_late ? "status-bad" : "status-warn"}">${r.status_label}</span></td>
           <td>${r.bag_id || "—"}</td>
@@ -1695,7 +1702,7 @@ function startSignalPoll() {
           known.add(s.order_id);
           playBeep();
           const el = document.getElementById("signal-banner");
-          if (el) { el.style.display = "block"; el.textContent = "Новый заказ: " + s.order_id; }
+          if (el) { el.style.display = "block"; el.textContent = "Новый заказ: " + (s.order_id || s.id); }
         }
       }
     } catch (_) {}

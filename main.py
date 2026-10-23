@@ -609,7 +609,7 @@ def assembly_board(db: Session = Depends(get_db), user: User = Depends(require_r
         status_label = ORDER_LABELS.get(o.status, o.status)
         bag = db.query(Bag).filter(Bag.id == o.bag_id).first() if o.bag_id else None
         result.append({
-            "id": o.id, "address": o.address, "status": o.status,
+            "id": o.id, "order_id": o.id, "address": o.address, "status": o.status,
             "status_label": status_label, "cutoff_left": left,
             "cutoff_minutes": o.cutoff_minutes or 30, "bag_id": o.bag_id,
             "is_late": is_late, "late_minutes": o.late_minutes,
