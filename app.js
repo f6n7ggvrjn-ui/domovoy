@@ -367,7 +367,7 @@ async function renderAssemble() {
     <div class="page-h"><h1>Сборка</h1>
       <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
     <div id="asm-area">
-      <p style="color:var(--muted);margin-bottom:0.75rem">Можно собирать после Cut off — опоздание зафиксируется</p>
+      <p style="color:var(--muted);margin-bottom:0.75rem">Сумка должна быть готова за 30 мин до времени заказа. После дедлайна — опоздание</p>
       ${waiting.map(o => `
         <div class="card" style="cursor:pointer" onclick="asmPickOrder('${o.order_id}')">
           <div style="display:flex;justify-content:space-between">
@@ -377,7 +377,7 @@ async function renderAssemble() {
           <div style="margin-top:0.4rem">${o.address || ""}</div>
           ${o.object_info ? `<div style="font-size:0.85rem;color:var(--muted)">${o.object_info}</div>` : ""}
           <div class="cutoff ${o.cutoff_left != null && o.cutoff_left < 0 ? "urgent" : ""}">
-            Cut off: ${o.cutoff_left != null ? (o.cutoff_left < 0 ? "просрочен на " + Math.abs(o.cutoff_left) + " мин" : o.cutoff_left + " мин") : (o.cutoff_minutes || 10) + " мин"}
+            Готовность: ${o.cutoff_left != null ? (o.cutoff_left < 0 ? "опоздание " + Math.abs(o.cutoff_left) + " мин" : "осталось " + o.cutoff_left + " мин") : "—"}${o.scheduled_at ? " · заказ " + fmtOrderTime(o.scheduled_at) : ""}
           </div>
         </div>`).join("") || "<p style='color:var(--muted)'>Нет заказов</p>"}
     </div>`;
@@ -765,7 +765,7 @@ async function renderBoard() {
   return `
     <div class="page-h"><h1>Очередь / статусы</h1></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Сумка</th><th>Cut off</th></tr></thead>
+      <thead><tr><th>Время</th><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Сумка</th><th>Готовность</th></tr></thead>
       <tbody>${rows.map(r => `
         <tr>
           <td>${r.order_id}</td>
@@ -845,18 +845,21 @@ async function renderOrdersAdmin() {
       <label>Тип уборки</label><input id="ord-type" />
       ${canAssign ? `<label>Исполнитель</label>
       <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>` : `<p style="color:var(--muted);font-size:0.9rem;margin:0.5rem 0">Исполнителя назначает админ или старший смены</p>`}
-      <label>Cut off</label>
-      <select id="ord-cut"><option value="10">10</option><option value="15">15</option><option value="20">20</option><option value="30">30</option></select>
+      <label>Время заказа *</label>
+      <input id="ord-time" type="datetime-local" />
+      <p style="color:var(--muted);font-size:0.8rem;margin:-0.5rem 0 0.75rem">Сумка должна быть готова за 30 мин до этого времени</p>
       <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
     </div>
     <div class="table-wrap" style="margin-top:1rem"><table>
-      <thead><tr><th>Заказ / адрес</th><th>Сумка</th><th>Статус</th><th>Исполнитель</th><th></th></tr></thead>
+      <thead><tr><th>Время</th><th>Заказ / адрес</th><th>Сумка</th><th>Статус</th><th>Готовность</th><th>Исполнитель</th><th></th></tr></thead>
       <tbody>${orders.map(o => `
         <tr>
+          <td style="white-space:nowrap"><b>${fmtOrderTime(o.scheduled_at)}</b></td>
           <td><b>${o.address}</b><br><small>${o.id}${o.is_late ? " · опоздание " + (o.late_minutes || "") + "м" : ""}</small>
             ${o.object_info ? "<br><small>" + o.object_info + "</small>" : ""}</td>
           <td>${o.bag_id || "—"}</td>
           <td><span class="status ${o.status === "done" ? "status-ok" : o.is_late ? "status-bad" : "status-warn"}">${o.status_label}</span></td>
+          <td class="cutoff ${o.cutoff_left != null && o.cutoff_left < 0 ? "urgent" : ""}">${fmtCutoff(o)}</td>
           <td>${o.executor_id || "—"}</td>
           <td style="white-space:nowrap">
             ${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
@@ -875,7 +878,8 @@ window.ordCreate = async (send) => {
       object_info: document.getElementById("ord-info").value.trim() || null,
       cleaning_type: document.getElementById("ord-type").value.trim() || null,
       executor_id: execEl ? (execEl.value || null) : null,
-      cutoff_minutes: parseInt(document.getElementById("ord-cut").value, 10),
+      scheduled_at: (document.getElementById("ord-time") || {}).value || null,
+      cutoff_minutes: 30,
       send_to_assembly: send,
     })});
     toast(r.message); if (r.signal) playBeep(); render();
@@ -1643,6 +1647,20 @@ window.qrShow = () => {
 };
 
 
+
+function fmtOrderTime(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    const p = n => String(n).padStart(2, "0");
+    return p(d.getDate()) + "." + p(d.getMonth()+1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  } catch (_) { return iso; }
+}
+function fmtCutoff(o) {
+  if (o.cutoff_left == null) return "—";
+  if (o.cutoff_left < 0) return "опозд. " + Math.abs(o.cutoff_left) + "м";
+  return "через " + o.cutoff_left + "м";
+}
 
 function playBeep() {
   try {

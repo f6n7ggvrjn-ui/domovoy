@@ -48,6 +48,8 @@ def _migrate():
                 ("completed_at", "DATETIME"),
                 ("completed_by", "VARCHAR(20)"),
                 ("warehouse_code", "VARCHAR(10)"),
+                ("scheduled_at", "DATETIME"),
+                ("created_by", "VARCHAR(20)"),
             ],
             "missing_reports": [
                 ("kind", "VARCHAR(20) DEFAULT 'missing'"),
@@ -214,7 +216,8 @@ class OrderCreateIn(BaseModel):
     cleaning_type: Optional[str] = None
     object_info: Optional[str] = None
     executor_id: Optional[str] = None
-    cutoff_minutes: int = 10
+    scheduled_at: Optional[str] = None  # "2026-10-23T14:30" или ISO
+    cutoff_minutes: int = 30  # за сколько минут до заказа сумка должна быть готова
     send_to_assembly: bool = True
 
 class TransferPointIn(BaseModel):
@@ -248,18 +251,40 @@ def log_user_change(db, user_id, changed_by, field, old, new):
         new_value=None if new is None else str(new),
     ))
 
+
+def order_ready_deadline(order: Optional[Order]):
+    """Сумка должна быть готова за 30 мин до времени заказа."""
+    if not order:
+        return None
+    if order.scheduled_at:
+        mins = order.cutoff_minutes or 30
+        return order.scheduled_at - timedelta(minutes=mins)
+    return None
+
+def order_cutoff_left(order: Optional[Order]):
+    """Минуты до дедлайна готовности (отрицательное = опоздание)."""
+    end = order_ready_deadline(order)
+    if not end:
+        return None
+    return int((end - datetime.utcnow()).total_seconds() // 60)
+
 def mark_late_if_needed(bag: Bag, order: Optional[Order]):
-    if not bag.assembly_started_at:
+    """Опоздание: не успели к (время заказа − 30 мин)."""
+    if not order:
         return
-    mins = bag.cutoff_minutes or (order.cutoff_minutes if order else 10) or 10
-    end = bag.assembly_started_at + timedelta(minutes=mins)
+    end = order_ready_deadline(order)
+    if not end:
+        # fallback: от старта сборки + cutoff
+        if not bag or not bag.assembly_started_at:
+            return
+        mins = bag.cutoff_minutes or order.cutoff_minutes or 30
+        end = bag.assembly_started_at + timedelta(minutes=mins)
     if datetime.utcnow() > end:
         late = int((datetime.utcnow() - end).total_seconds() // 60)
-        if order:
-            order.is_late = True
-            order.late_minutes = max(order.late_minutes or 0, late)
-            if order.status == "assembling":
-                order.status = "assembling_late"
+        order.is_late = True
+        order.late_minutes = max(order.late_minutes or 0, late)
+        if order.status == "assembling":
+            order.status = "assembling_late"
 
 
 # ---------- warehouses / shift / logistics helpers ----------
@@ -545,61 +570,35 @@ def delete_cell(code: str, db: Session = Depends(get_db), user: User = Depends(r
 # ---------- assembly board ----------
 @app.get("/api/assembly/board")
 def assembly_board(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
-    orders = db.query(Order).filter(
+    rows = db.query(Order).filter(
         Order.status.in_(["awaiting_assembly", "assembling", "assembling_late", "ready", "issued", "completion_pending"])
-    ).order_by(Order.created_at).all()
-    rows = []
-    for o in orders:
-        left = None
+    ).all()
+    result = []
+    for o in rows:
+        mark_late_if_needed(
+            db.query(Bag).filter(Bag.id == o.bag_id).first() if o.bag_id else Bag(),
+            o,
+        )
         is_late = bool(o.is_late)
+        left = order_cutoff_left(o)
+        if left is not None and left < 0:
+            is_late = True
+            o.is_late = True
+            o.late_minutes = max(o.late_minutes or 0, abs(left))
         status_label = ORDER_LABELS.get(o.status, o.status)
-        if o.bag_id:
-            bag = db.query(Bag).filter(Bag.id == o.bag_id).first()
-            if bag and bag.status == "assembling" and bag.assembly_started_at:
-                mark_late_if_needed(bag, o)
-                end = bag.assembly_started_at + timedelta(minutes=bag.cutoff_minutes or o.cutoff_minutes or 10)
-                left = int((end - datetime.utcnow()).total_seconds() // 60)
-                if left < 0:
-                    is_late = True
-                    o.is_late = True
-                    o.late_minutes = abs(left)
-                    if o.status == "assembling":
-                        o.status = "assembling_late"
-                    status_label = ORDER_LABELS["assembling_late"]
-        elif o.status == "awaiting_assembly":
-            left = o.cutoff_minutes
-        rows.append({
-            "order_id": o.id, "address": o.address, "status": o.status,
+        bag = db.query(Bag).filter(Bag.id == o.bag_id).first() if o.bag_id else None
+        result.append({
+            "id": o.id, "address": o.address, "status": o.status,
             "status_label": status_label, "cutoff_left": left,
-            "cutoff_minutes": o.cutoff_minutes, "bag_id": o.bag_id,
-            "executor_id": o.executor_id, "is_late": is_late,
-            "late_minutes": o.late_minutes, "object_info": o.object_info,
-            "client_name": o.client_name,
+            "cutoff_minutes": o.cutoff_minutes or 30, "bag_id": o.bag_id,
+            "is_late": is_late, "late_minutes": o.late_minutes,
+            "executor_id": o.executor_id, "object_info": o.object_info,
+            "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
+            "bag_status": bag.status if bag else None,
         })
     db.commit()
-    return rows
-
-@app.get("/api/bags")
-def list_bags(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
-    labels = {
-        "free": "Свободна",
-        "assembling": "Собирается на заказ",
-        "at_transfer": "Ожидает в точке передачи",
-        "in_use": "В использовании",
-        "awaiting_unpack": "Принята после исполнителя, ждёт разбор",
-    }
-    result = []
-    for b in db.query(Bag).order_by(Bag.id).all():
-        label = labels.get(b.status, b.status)
-        if b.status == "in_use" and b.executor_id:
-            label = f"В использовании ({b.executor_id})"
-        if b.status == "assembling" and b.assembled_by:
-            label = f"Собирается ({b.assembled_by})"
-        result.append({
-            "id": b.id, "status": b.status, "status_label": label,
-            "order_id": b.order_id, "executor_id": b.executor_id,
-            "assembled_by": b.assembled_by, "transfer_point": b.transfer_point,
-        })
+    # ближайший заказ сверху
+    result.sort(key=lambda x: (x["scheduled_at"] is None, x["scheduled_at"] or "", x["id"]))
     return result
 
 # ---------- assembly ----------
@@ -626,19 +625,17 @@ def assembly_start(data: AssemblyStartIn, db: Session = Depends(get_db), user: U
     bag.status = "assembling"
     bag.order_id = order.id
     bag.assembled_by = user.id
-    bag.cutoff_minutes = order.cutoff_minutes or 10
+    bag.cutoff_minutes = order.cutoff_minutes or 30
     mark_late_if_needed(bag, order)
     order.bag_id = bag.id
     order.status = "assembling_late" if order.is_late else "assembling"
     log_op(db, "assembly_start", user.id, bag_id=bag.id, order_id=order.id)
     db.commit()
-    left = None
-    if bag.assembly_started_at:
-        end = bag.assembly_started_at + timedelta(minutes=bag.cutoff_minutes)
-        left = int((end - datetime.utcnow()).total_seconds() // 60)
+    left = order_cutoff_left(order)
     return {
         "ok": True, "bag_id": bag.id, "order_id": order.id,
         "cutoff_minutes": bag.cutoff_minutes, "cutoff_left": left,
+        "scheduled_at": order.scheduled_at.isoformat() if order.scheduled_at else None,
         "is_late": bool(order.is_late), "late_minutes": order.late_minutes,
         "address": order.address, "object_info": order.object_info,
         "message": "Сборка начата" + (" (опоздание зафиксировано)" if order.is_late else ""),
@@ -1085,11 +1082,23 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
         executor_id = normalize(data.executor_id).lower()
     oid = _next_order_id(db)
     status = "awaiting_assembly" if data.send_to_assembly else "new"
+    scheduled = None
+    if data.scheduled_at:
+        raw = data.scheduled_at.strip().replace("Z", "")
+        for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                scheduled = datetime.strptime(raw[:19] if len(raw) > 19 else raw, fmt)
+                break
+            except ValueError:
+                continue
+        if scheduled is None:
+            raise HTTPException(400, "Неверное время заказа")
     order = Order(
         id=oid, client_name=data.client_name, address=data.address.strip(),
         cleaning_type=data.cleaning_type, object_info=data.object_info,
         executor_id=executor_id,
-        status=status, cutoff_minutes=data.cutoff_minutes or 10,
+        status=status, cutoff_minutes=data.cutoff_minutes or 30,
+        scheduled_at=scheduled,
         signal_sent=bool(data.send_to_assembly), created_at=datetime.utcnow(),
         created_by=user.id,
     )
@@ -1191,16 +1200,28 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
             q = q.filter(Order.status == "done")
         elif scope == "active":
             q = q.filter(Order.status != "done")
+    rows = list(q.all())
+    # активные — ближайшее время заказа сверху
+    if scope != "history":
+        rows.sort(key=lambda o: (o.scheduled_at is None, o.scheduled_at or datetime.max, o.created_at or datetime.max))
     result = []
-    for o in q.all():
+    for o in rows:
+        if o.status not in ("done", "cancelled"):
+            mark_late_if_needed(
+                db.query(Bag).filter(Bag.id == o.bag_id).first() if o.bag_id else Bag(),
+                o,
+            )
         bag = db.query(Bag).filter(Bag.id == o.bag_id).first() if o.bag_id else None
+        left = order_cutoff_left(o) if o.status not in ("done", "cancelled") else None
         result.append({
             "id": o.id, "address": o.address, "status": o.status,
             "status_label": ORDER_LABELS.get(o.status, o.status),
             "executor_id": o.executor_id, "bag_id": o.bag_id,
-            "cutoff_minutes": o.cutoff_minutes, "client_name": o.client_name,
+            "cutoff_minutes": o.cutoff_minutes or 30, "client_name": o.client_name,
             "cleaning_type": o.cleaning_type, "object_info": o.object_info,
             "is_late": bool(o.is_late), "late_minutes": o.late_minutes,
+            "cutoff_left": left,
+            "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
             "bag_status": bag.status if bag else None,
             "transfer_point": bag.transfer_point if bag else None,
             "completed_at": o.completed_at.isoformat() if o.completed_at else None,
@@ -1208,6 +1229,7 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
             "created_by": o.created_by,
             "created_at": o.created_at.isoformat() if o.created_at else None,
         })
+    db.commit()
     return result
 
 

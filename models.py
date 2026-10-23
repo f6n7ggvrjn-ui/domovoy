@@ -85,7 +85,8 @@ class Bag(Base):
     executor_id = Column(String(20), nullable=True)
     transfer_point = Column(String(100), nullable=True)
     assembled_by = Column(String(20), nullable=True)
-    cutoff_minutes = Column(Integer, default=10)
+    cutoff_minutes = Column(Integer, default=30)  # минут до заказа, когда сумка должна быть готова
+    scheduled_at = Column(DateTime, nullable=True)  # время выезда/заказа
     assembly_started_at = Column(DateTime, nullable=True)
     assembly_finished_at = Column(DateTime, nullable=True)
     issued_at = Column(DateTime, nullable=True)
@@ -103,7 +104,8 @@ class Order(Base):
     executor_id = Column(String(20), nullable=True)
     bag_id = Column(String(20), nullable=True)
     status = Column(String(40), default="new")
-    cutoff_minutes = Column(Integer, default=10)
+    cutoff_minutes = Column(Integer, default=30)  # минут до заказа, когда сумка должна быть готова
+    scheduled_at = Column(DateTime, nullable=True)  # время выезда/заказа
     is_late = Column(Boolean, default=False)
     late_minutes = Column(Integer, nullable=True)
     signal_sent = Column(Boolean, default=False)
