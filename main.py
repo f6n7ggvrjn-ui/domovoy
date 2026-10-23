@@ -1160,7 +1160,7 @@ def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = 
     if order.status != "completion_pending":
         raise HTTPException(400, "Нет запроса на завершение")
     order.status = "done"
-    order.completed_at = datetime.utcnow()
+    order.completed_at = now_app()
     order.completed_by = user.id
     log_op(db, "complete_confirm", user.id, order_id=order.id)
     db.commit()
@@ -1195,7 +1195,7 @@ def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depe
             # issued — сумка у исполнителя, разбор потом; только отвязать заказ
 
     order.status = "cancelled"
-    order.completed_at = datetime.utcnow()
+    order.completed_at = now_app()
     order.completed_by = user.id
     order.bag_id = None
     log_op(db, "order_cancelled", user.id, order_id=order.id)
@@ -1446,6 +1446,7 @@ def force_free_bag(bag_id: str, db: Session = Depends(get_db), user: User = Depe
 
 @app.get("/api/tsd/signals")
 def tsd_signals(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+    """Новые заказы на сборку — для звука на ТСД (в т.ч. от менеджера)."""
     orders = db.query(Order).filter(Order.status == "awaiting_assembly", Order.signal_sent == True).order_by(Order.created_at.desc()).limit(20).all()
     return [{"order_id": o.id, "address": o.address, "cutoff_minutes": o.cutoff_minutes,
              "executor_id": o.executor_id, "beep": True} for o in orders]

@@ -293,7 +293,7 @@ async function renderOrderHistory() {
           <td>${o.id}${o.bag_id ? "<br><small>"+o.bag_id+"</small>" : ""}</td>
           <td>${o.address || ""}${o.is_late ? "<br><small style=color:var(--danger)>опоздание</small>" : ""}</td>
           <td>${o.status_label}</td>
-          <td>${o.completed_at ? o.completed_at.replace("T"," ").slice(0,16) : "—"}</td>
+          <td>${fmtOrderTime(o.completed_at)}</td>
         </tr>`).join("")}
       </tbody></table></div>` : "<p style='color:var(--muted)'>Нет завершённых заказов</p>"}`;
 }
@@ -1682,31 +1682,57 @@ function fmtCutoff(o) {
 
 function playBeep() {
   try {
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+  } catch (_) {}
+  try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator(); const g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination); o.frequency.value = 880; g.gain.value = 0.15;
-    o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 200);
+    const play = (freq, start, dur) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq;
+      g.gain.value = 0.2;
+      o.start(ctx.currentTime + start);
+      o.stop(ctx.currentTime + start + dur);
+    };
+    play(880, 0, 0.18);
+    play(1175, 0.22, 0.18);
+    play(880, 0.44, 0.25);
+    setTimeout(() => ctx.close(), 1000);
   } catch (_) {}
 }
 
 let signalTimer = null;
+let signalKnown = null;
 function startSignalPoll() {
   if (signalTimer) clearInterval(signalTimer);
   if (!user || (user.role !== "supervisor" && user.role !== "warehouse" && user.role !== "admin")) return;
-  let known = new Set();
-  signalTimer = setInterval(async () => {
+  // первый опрос только запоминает текущие заказы без звука
+  signalKnown = null;
+  const tick = async () => {
     try {
       const sigs = await api("/tsd/signals");
-      for (const s of sigs) {
-        if (!known.has(s.order_id)) {
-          known.add(s.order_id);
+      const ids = (sigs || []).map(s => s.order_id || s.id).filter(Boolean);
+      if (signalKnown === null) {
+        signalKnown = new Set(ids);
+        return;
+      }
+      for (const id of ids) {
+        if (!signalKnown.has(id)) {
+          signalKnown.add(id);
           playBeep();
+          try { toast("Новый заказ на сборку: " + id); } catch (_) {}
           const el = document.getElementById("signal-banner");
-          if (el) { el.style.display = "block"; el.textContent = "Новый заказ: " + (s.order_id || s.id); }
+          if (el) {
+            el.style.display = "block";
+            el.textContent = "🔔 Новый заказ: " + id + " — откройте СБОРКА";
+          }
         }
       }
     } catch (_) {}
-  }, 8000);
+  };
+  tick();
+  signalTimer = setInterval(tick, 4000);
 }
 
 if (token && user) {
