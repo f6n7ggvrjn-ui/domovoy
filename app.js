@@ -344,8 +344,9 @@ async function renderHome() {
           ${o.id}${o.bag_id ? " · " + o.bag_id : ""}
           ${o.object_info ? "<br>" + o.object_info : ""}
         </div>
-        ${o.status === "issued" ? `<button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="reqComplete('${o.id}')">Заказ выполнен</button>` : ""}
         ${o.status === "ready" ? `<p style="margin-top:0.5rem;color:var(--accent)">Сумка ожидает на точке передачи</p>` : ""}
+        ${o.payment_amount || o.pay_url ? payQrBlock(o) : ""}
+        ${o.status === "issued" ? `<button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="reqComplete('${o.id}')">Заказ выполнен</button>` : ""}
       </div>`).join("") || "<p style='color:var(--muted)'>Нет заказов</p>"}`;
 }
 
@@ -855,6 +856,9 @@ async function renderOrdersAdmin() {
       <label>Время заказа *</label>
       <input id="ord-time" type="datetime-local" />
       <p style="color:var(--muted);font-size:0.8rem;margin:-0.5rem 0 0.75rem">Время — Екатеринбург (UTC+5). Сумка готова за 30 мин до заказа</p>
+      <label>Сумма к оплате (₽)</label>
+      <input id="ord-pay" type="number" min="1" step="1" placeholder="например 2500" />
+      <p style="color:var(--muted);font-size:0.8rem;margin:-0.5rem 0 0.75rem">QR на ЮMoney для клиента (кошелёк компании)</p>
       <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
     </div>
     <div class="table-wrap" style="margin-top:1rem"><table>
@@ -873,6 +877,7 @@ async function renderOrdersAdmin() {
             ${o.status === "completion_pending" && user.role === "admin" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
             ${canAssign && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}
             ${(user.role === "admin" || user.role === "order_manager" || user.role === "supervisor") && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}
+            ${o.payment_amount ? `<button class="btn btn-accent btn-sm" onclick="showPayQr('${o.id}', ${o.payment_amount})">QR оплаты</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>`;
@@ -888,6 +893,7 @@ window.ordCreate = async (send) => {
       executor_id: execEl ? (execEl.value || null) : null,
       scheduled_at: (document.getElementById("ord-time") || {}).value || null,
       cutoff_minutes: 30,
+      payment_amount: parseInt((document.getElementById("ord-pay") || {}).value, 10) || null,
       send_to_assembly: send,
     })});
     toast(r.message); if (r.signal) playBeep(); render();
@@ -896,6 +902,19 @@ window.ordCreate = async (send) => {
 window.ordSend = async (id) => {
   try { toast((await api("/orders/" + id + "/send-to-assembly", { method: "POST" })).message); playBeep(); render(); }
   catch (e) { toast(e.message, true); }
+};
+window.showPayQr = (id, amount) => {
+  const url = "https://yoomoney.ru/to/4100119594706417/" + amount;
+  const qr = "https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=12&data=" + encodeURIComponent(url);
+  const w = window.open("", "_blank", "width=320,height=420");
+  if (!w) { toast("Разрешите всплывающие окна"); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Оплата ${amount} ₽</title>
+    <style>body{font-family:sans-serif;text-align:center;padding:16px;background:#0c1210;color:#f0fdf4}
+    img{background:#fff;border-radius:12px;padding:10px}</style></head><body>
+    <h2>Домовой</h2><p>Заказ ${id}</p><p style="font-size:1.4rem;font-weight:700">${amount} ₽</p>
+    <img src="${qr}" width="260" height="260" /><p style="opacity:.7;font-size:0.85rem">ЮMoney · сканируйте для оплаты</p>
+    </body></html>`);
+  w.document.close();
 };
 window.ordCancel = async (id) => {
   if (!confirm("Отменить заказ " + id + "?\nОн попадёт в историю со статусом «Отменён».")) return;
@@ -1662,6 +1681,23 @@ window.qrShow = () => {
 };
 
 
+
+function payQrBlock(o) {
+  if (!o) return "";
+  const amount = o.payment_amount;
+  const url = o.pay_url || (amount
+    ? "https://yoomoney.ru/to/4100119594706417/" + amount
+    : "https://yoomoney.ru/to/4100119594706417");
+  const qr = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=" + encodeURIComponent(url);
+  return `
+    <div style="text-align:center;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border)">
+      <div style="font-weight:700;margin-bottom:0.35rem">Оплата ЮMoney${amount ? " · " + amount + " ₽" : ""}</div>
+      <img src="${qr}" width="220" height="220" alt="QR оплата"
+        style="background:#fff;border-radius:12px;padding:8px;margin:0 auto;display:block" />
+      <p style="color:var(--muted);font-size:0.8rem;margin-top:0.5rem">Клиент сканирует камерой или в приложении банка / ЮMoney</p>
+      <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${url}').then(()=>toast('Ссылка скопирована'))">Копировать ссылку</button>
+    </div>`;
+}
 
 function fmtOrderTime(iso) {
   if (!iso) return "—";

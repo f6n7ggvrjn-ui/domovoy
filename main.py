@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import Request, FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy.orm import Session
@@ -50,6 +50,7 @@ def _migrate():
                 ("completed_by", "VARCHAR(20)"),
                 ("warehouse_code", "VARCHAR(10)"),
                 ("scheduled_at", "DATETIME"),
+                ("payment_amount", "INTEGER"),
                 ("created_by", "VARCHAR(20)"),
             ],
             "missing_reports": [
@@ -219,6 +220,7 @@ class OrderCreateIn(BaseModel):
     executor_id: Optional[str] = None
     scheduled_at: Optional[str] = None  # "2026-10-23T14:30" или ISO
     cutoff_minutes: int = 30  # за сколько минут до заказа сумка должна быть готова
+    payment_amount: Optional[int] = None  # рубли, для QR ЮMoney
     send_to_assembly: bool = True
 
 class TransferPointIn(BaseModel):
@@ -256,6 +258,7 @@ def log_user_change(db, user_id, changed_by, field, old, new):
 
 # Часовой пояс компании — Екатеринбург
 APP_TZ = ZoneInfo("Asia/Yekaterinburg")
+YOOMONEY_WALLET = "4100119594706417"
 
 def now_app() -> datetime:
     """Текущее время в Екатеринбурге (naive, для сравнения с scheduled_at)."""
@@ -614,6 +617,8 @@ def assembly_board(db: Session = Depends(get_db), user: User = Depends(require_r
             "cutoff_minutes": o.cutoff_minutes or 30, "bag_id": o.bag_id,
             "is_late": is_late, "late_minutes": o.late_minutes,
             "executor_id": o.executor_id, "object_info": o.object_info,
+            "payment_amount": o.payment_amount,
+            "pay_url": (f"https://yoomoney.ru/to/4100119594706417/" + str(o.payment_amount)) if o.payment_amount else f"https://yoomoney.ru/to/4100119594706417",
             "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
             "bag_status": bag.status if bag else None,
         })
@@ -1115,6 +1120,7 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
         executor_id=executor_id,
         status=status, cutoff_minutes=data.cutoff_minutes or 30,
         scheduled_at=scheduled,
+        payment_amount=data.payment_amount if data.payment_amount and data.payment_amount > 0 else None,
         signal_sent=bool(data.send_to_assembly), created_at=datetime.utcnow(),
         created_by=user.id,
     )
@@ -1273,6 +1279,8 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
             "executor_id": o.executor_id, "bag_id": o.bag_id,
             "cutoff_minutes": o.cutoff_minutes or 30, "client_name": o.client_name,
             "cleaning_type": o.cleaning_type, "object_info": o.object_info,
+            "payment_amount": o.payment_amount,
+            "pay_url": (f"https://yoomoney.ru/to/{YOOMONEY_WALLET}/" + str(o.payment_amount)) if getattr(o, "payment_amount", None) else f"https://yoomoney.ru/to/{YOOMONEY_WALLET}",
             "is_late": bool(o.is_late), "late_minutes": o.late_minutes,
             "cutoff_left": left,
             "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
@@ -1443,6 +1451,60 @@ def force_free_bag(bag_id: str, db: Session = Depends(get_db), user: User = Depe
     if order_id:
         msg += f". Заказ {order_id} снова ожидает сборки"
     return {"ok": True, "message": msg, "returned": returned, "cell": default_code}
+
+
+@app.get("/api/pay/info")
+def pay_info(user: User = Depends(get_current_user)):
+    return {
+        "wallet": YOOMONEY_WALLET,
+        "base_url": f"https://yoomoney.ru/to/{YOOMONEY_WALLET}",
+        "hint": "Клиент сканирует QR → перевод на ЮMoney компании",
+    }
+
+
+def _static_file(*names):
+    for base in (FRONTEND, _here, "/app/frontend"):
+        for name in names:
+            p = os.path.join(base, name)
+            if os.path.isfile(p):
+                return p
+    return None
+
+@app.get("/manifest.webmanifest")
+def pwa_manifest():
+    p = _static_file("manifest.webmanifest")
+    if not p:
+        raise HTTPException(404)
+    return FileResponse(p, media_type="application/manifest+json")
+
+@app.get("/sw.js")
+def pwa_sw():
+    p = _static_file("sw.js")
+    if not p:
+        raise HTTPException(404)
+    return FileResponse(p, media_type="application/javascript", headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
+
+@app.get("/icon-192.png")
+def pwa_icon_192():
+    p = _static_file("icon-192.png")
+    if not p:
+        raise HTTPException(404)
+    return FileResponse(p, media_type="image/png")
+
+@app.get("/icon-512.png")
+def pwa_icon_512():
+    p = _static_file("icon-512.png")
+    if not p:
+        raise HTTPException(404)
+    return FileResponse(p, media_type="image/png")
+
+@app.get("/apple-touch-icon.png")
+def pwa_icon_apple():
+    p = _static_file("apple-touch-icon.png")
+    if not p:
+        raise HTTPException(404)
+    return FileResponse(p, media_type="image/png")
+
 
 @app.get("/api/tsd/signals")
 def tsd_signals(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
