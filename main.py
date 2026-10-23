@@ -3,7 +3,8 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 from typing import Optional, List
 import os
@@ -252,6 +253,26 @@ def log_user_change(db, user_id, changed_by, field, old, new):
     ))
 
 
+
+# Часовой пояс компании — Екатеринбург
+APP_TZ = ZoneInfo("Asia/Yekaterinburg")
+
+def now_app() -> datetime:
+    """Текущее время в Екатеринбурге (naive, для сравнения с scheduled_at)."""
+    return datetime.now(APP_TZ).replace(tzinfo=None)
+
+def parse_app_datetime(raw: str) -> datetime:
+    """Парсит строку времени заказа как екатеринбургское локальное."""
+    s = (raw or "").strip().replace("Z", "").replace("+05:00", "")
+    if "T" not in s and " " in s:
+        s = s.replace(" ", "T", 1)
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(s[:19] if len(s) >= 19 else s, fmt)
+        except ValueError:
+            continue
+    raise ValueError("bad datetime")
+
 def order_ready_deadline(order: Optional[Order]):
     """Сумка должна быть готова за 30 мин до времени заказа."""
     if not order:
@@ -262,11 +283,11 @@ def order_ready_deadline(order: Optional[Order]):
     return None
 
 def order_cutoff_left(order: Optional[Order]):
-    """Минуты до дедлайна готовности (отрицательное = опоздание)."""
+    """Минуты до дедлайна готовности (отрицательное = опоздание). Время — Екатеринбург."""
     end = order_ready_deadline(order)
     if not end:
         return None
-    return int((end - datetime.utcnow()).total_seconds() // 60)
+    return int((end - now_app()).total_seconds() // 60)
 
 def mark_late_if_needed(bag: Bag, order: Optional[Order]):
     """Опоздание: не успели к (время заказа − 30 мин)."""
@@ -279,8 +300,8 @@ def mark_late_if_needed(bag: Bag, order: Optional[Order]):
             return
         mins = bag.cutoff_minutes or order.cutoff_minutes or 30
         end = bag.assembly_started_at + timedelta(minutes=mins)
-    if datetime.utcnow() > end:
-        late = int((datetime.utcnow() - end).total_seconds() // 60)
+    if now_app() > end:
+        late = int((now_app() - end).total_seconds() // 60)
         order.is_late = True
         order.late_minutes = max(order.late_minutes or 0, late)
         if order.status == "assembling":
@@ -1084,15 +1105,10 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
     status = "awaiting_assembly" if data.send_to_assembly else "new"
     scheduled = None
     if data.scheduled_at:
-        raw = data.scheduled_at.strip().replace("Z", "")
-        for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
-            try:
-                scheduled = datetime.strptime(raw[:19] if len(raw) > 19 else raw, fmt)
-                break
-            except ValueError:
-                continue
-        if scheduled is None:
-            raise HTTPException(400, "Неверное время заказа")
+        try:
+            scheduled = parse_app_datetime(data.scheduled_at)
+        except ValueError:
+            raise HTTPException(400, "Неверное время заказа (Екатеринбург)")
     order = Order(
         id=oid, client_name=data.client_name, address=data.address.strip(),
         cleaning_type=data.cleaning_type, object_info=data.object_info,

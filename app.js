@@ -847,7 +847,7 @@ async function renderOrdersAdmin() {
       <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>` : `<p style="color:var(--muted);font-size:0.9rem;margin:0.5rem 0">Исполнителя назначает админ или старший смены</p>`}
       <label>Время заказа *</label>
       <input id="ord-time" type="datetime-local" />
-      <p style="color:var(--muted);font-size:0.8rem;margin:-0.5rem 0 0.75rem">Сумка должна быть готова за 30 мин до этого времени</p>
+      <p style="color:var(--muted);font-size:0.8rem;margin:-0.5rem 0 0.75rem">Время — Екатеринбург (UTC+5). Сумка готова за 30 мин до заказа</p>
       <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
     </div>
     <div class="table-wrap" style="margin-top:1rem"><table>
@@ -1659,6 +1659,9 @@ window.qrShow = () => {
 function fmtOrderTime(iso) {
   if (!iso) return "—";
   try {
+    // сервер хранит екатеринбургское время без Z — не сдвигать через Date UTC
+    const m = String(iso).match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+    if (m) return m[3] + "." + m[2] + " " + m[4] + ":" + m[5];
     const d = new Date(iso);
     const p = n => String(n).padStart(2, "0");
     return p(d.getDate()) + "." + p(d.getMonth()+1) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
