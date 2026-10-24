@@ -1085,49 +1085,98 @@ def restore_missing(data: MissingActionIn, db: Session = Depends(get_db), user: 
 
 # ---------- orders ----------
 def _next_order_id(db: Session) -> str:
-    last = db.query(Order).order_by(Order.id.desc()).first()
     n = 1
-    if last and last.id.startswith("ORD"):
-        try:
-            n = int(last.id.replace("ORD", "")) + 1
-        except ValueError:
-            n = 1
+    for o in db.query(Order).all():
+        if o.id and str(o.id).upper().startswith("ORD"):
+            try:
+                n = max(n, int(str(o.id)[3:]) + 1)
+            except ValueError:
+                pass
     return f"ORD{n:05d}"
 
 @app.post("/api/orders")
-def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager"))):
+def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager", "supervisor"))):
+    """Создание заказа. Менеджер — без назначения исполнителя; админ/старший могут назначить."""
     if not data.address or not data.address.strip():
         raise HTTPException(400, "Укажите адрес")
+
+    # дописать колонки на старых БД
+    try:
+        from sqlalchemy import text as _text
+        for col, typ in [
+            ("scheduled_at", "DATETIME"),
+            ("created_by", "VARCHAR(20)"),
+            ("payment_amount", "INTEGER"),
+            ("object_info", "TEXT"),
+            ("cutoff_minutes", "INTEGER"),
+            ("is_late", "BOOLEAN DEFAULT 0"),
+            ("late_minutes", "INTEGER"),
+            ("signal_sent", "BOOLEAN DEFAULT 0"),
+            ("warehouse_code", "VARCHAR(10)"),
+            ("completion_requested_at", "DATETIME"),
+            ("completed_at", "DATETIME"),
+            ("completed_by", "VARCHAR(20)"),
+        ]:
+            try:
+                db.execute(_text(f"ALTER TABLE orders ADD COLUMN {col} {typ}"))
+                db.commit()
+            except Exception:
+                db.rollback()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
     executor_id = None
-    # назначать исполнителя могут только админ и старший (не менеджер)
     if data.executor_id and user.role in ("admin", "supervisor", "warehouse"):
         ex = db.query(User).filter(User.id == normalize(data.executor_id).lower()).first()
         if not ex or ex.role not in ("cleaner", "handyman"):
             raise HTTPException(400, "Исполнитель: клинер или мастер")
+        if getattr(ex, "status", None) == "blocked":
+            raise HTTPException(400, "Исполнитель заблокирован")
         executor_id = normalize(data.executor_id).lower()
+
     oid = _next_order_id(db)
     status = "awaiting_assembly" if data.send_to_assembly else "new"
     scheduled = None
-    if data.scheduled_at:
+    if data.scheduled_at and str(data.scheduled_at).strip():
         try:
-            scheduled = parse_app_datetime(data.scheduled_at)
-        except ValueError:
-            raise HTTPException(400, "Неверное время заказа (Екатеринбург)")
-    order = Order(
-        id=oid, client_name=data.client_name, address=data.address.strip(),
-        cleaning_type=data.cleaning_type, object_info=data.object_info,
-        executor_id=executor_id,
-        status=status, cutoff_minutes=data.cutoff_minutes or 30,
-        scheduled_at=scheduled,
-        payment_amount=data.payment_amount if data.payment_amount and data.payment_amount > 0 else None,
-        signal_sent=bool(data.send_to_assembly), created_at=datetime.utcnow(),
-        created_by=user.id,
-    )
-    db.add(order)
-    log_op(db, "order_created", user.id, order_id=oid)
-    db.commit()
-    return {"id": order.id, "status": order.status, "signal": order.signal_sent,
-            "message": f"Заказ {order.id} " + ("на сборку" if data.send_to_assembly else "создан")}
+            scheduled = parse_app_datetime(str(data.scheduled_at))
+        except Exception:
+            # не валим заказ — просто без времени
+            scheduled = None
+
+    try:
+        order = Order(id=oid, address=data.address.strip(), status=status)
+        order.client_name = data.client_name
+        order.cleaning_type = data.cleaning_type
+        order.object_info = data.object_info
+        order.executor_id = executor_id
+        order.cutoff_minutes = data.cutoff_minutes or 30
+        order.scheduled_at = scheduled
+        order.signal_sent = bool(data.send_to_assembly)
+        order.created_at = datetime.utcnow()
+        order.created_by = user.id
+        order.is_late = False
+        db.add(order)
+        db.flush()
+        try:
+            log_op(db, "order_created", user.id, order_id=oid)
+        except Exception:
+            pass
+        db.commit()
+        db.refresh(order)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Не удалось создать заказ: {type(e).__name__}: {e}")
+
+    return {
+        "id": order.id,
+        "status": order.status,
+        "signal": bool(order.signal_sent),
+        "message": f"Заказ {order.id} " + ("на сборку" if data.send_to_assembly else "создан"),
+    }
 
 @app.post("/api/orders/{order_id}/send-to-assembly")
 def send_to_assembly(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager"))):

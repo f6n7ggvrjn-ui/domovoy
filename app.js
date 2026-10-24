@@ -892,19 +892,25 @@ async function renderOrdersAdmin() {
 }
 window.ordCreate = async (send) => {
   try {
+    const addr = (document.getElementById("ord-addr") || {}).value || "";
+    if (!addr.trim()) { toast("Укажите адрес", true); return; }
+    const timeEl = document.getElementById("ord-time");
     const execEl = document.getElementById("ord-exec");
-    const r = await api("/orders", { method: "POST", body: JSON.stringify({
-      client_name: document.getElementById("ord-client").value.trim() || null,
-      address: document.getElementById("ord-addr").value.trim(),
-      object_info: document.getElementById("ord-info").value.trim() || null,
-      cleaning_type: document.getElementById("ord-type").value.trim() || null,
+    const body = {
+      client_name: (document.getElementById("ord-client") || {}).value?.trim() || null,
+      address: addr.trim(),
+      object_info: (document.getElementById("ord-info") || {}).value?.trim() || null,
+      cleaning_type: (document.getElementById("ord-type") || {}).value?.trim() || null,
       executor_id: execEl ? (execEl.value || null) : null,
-      scheduled_at: (document.getElementById("ord-time") || {}).value || null,
+      scheduled_at: timeEl && timeEl.value ? timeEl.value : null,
       cutoff_minutes: 30,
-      send_to_assembly: send,
-    })});
-    toast(r.message); if (r.signal) playBeep(); render();
-  } catch (e) { toast(e.message, true); }
+      send_to_assembly: !!send,
+    };
+    const r = await api("/orders", { method: "POST", body: JSON.stringify(body) });
+    toast(r.message || ("Создан " + r.id));
+    if (r.signal) playBeep();
+    render();
+  } catch (e) { toast(e.message || "Ошибка сервера", true); }
 };
 window.ordSend = async (id) => {
   try { toast((await api("/orders/" + id + "/send-to-assembly", { method: "POST" })).message); playBeep(); render(); }
