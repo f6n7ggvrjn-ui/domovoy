@@ -617,8 +617,7 @@ def assembly_board(db: Session = Depends(get_db), user: User = Depends(require_r
             "cutoff_minutes": o.cutoff_minutes or 30, "bag_id": o.bag_id,
             "is_late": is_late, "late_minutes": o.late_minutes,
             "executor_id": o.executor_id, "object_info": o.object_info,
-            "payment_amount": o.payment_amount,
-            "pay_url": (f"https://yoomoney.ru/to/4100119594706417/" + str(o.payment_amount)) if o.payment_amount else f"https://yoomoney.ru/to/4100119594706417",
+            "payment_amount": getattr(o, "payment_amount", None),
             "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
             "bag_status": bag.status if bag else None,
         })
@@ -1279,8 +1278,7 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
             "executor_id": o.executor_id, "bag_id": o.bag_id,
             "cutoff_minutes": o.cutoff_minutes or 30, "client_name": o.client_name,
             "cleaning_type": o.cleaning_type, "object_info": o.object_info,
-            "payment_amount": o.payment_amount,
-            "pay_url": (f"https://yoomoney.ru/to/{YOOMONEY_WALLET}/" + str(o.payment_amount)) if getattr(o, "payment_amount", None) else f"https://yoomoney.ru/to/{YOOMONEY_WALLET}",
+            "payment_amount": getattr(o, "payment_amount", None),
             "is_late": bool(o.is_late), "late_minutes": o.late_minutes,
             "cutoff_left": left,
             "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
@@ -1353,6 +1351,29 @@ def return_bag(data: ReturnBagIn, db: Session = Depends(get_db), user: User = De
     return {"ok": True, "message": f"Сумка {bag.id} ждёт разбор", "status": "awaiting_unpack"}
 
 
+
+
+@app.get("/api/bags")
+def list_bags(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+    labels = {
+        "free": "Свободна",
+        "assembling": "Собирается",
+        "ready": "Готова / ждёт",
+        "at_transfer": "На точке передачи",
+        "issued": "У исполнителя",
+        "awaiting_unpack": "Ждёт разбора",
+    }
+    rows = db.query(Bag).order_by(Bag.id).all()
+    return [{
+        "id": b.id,
+        "status": b.status,
+        "status_label": labels.get(b.status, b.status or "—"),
+        "order_id": b.order_id,
+        "assembled_by": b.assembled_by,
+        "executor_id": b.executor_id,
+        "transfer_point": b.transfer_point,
+        "warehouse_code": getattr(b, "warehouse_code", None),
+    } for b in rows]
 
 @app.post("/api/bags")
 def create_bag(data: BagCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
