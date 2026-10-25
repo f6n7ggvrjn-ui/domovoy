@@ -908,12 +908,12 @@ window.ordCreate = async (send) => {
     };
     const r = await api("/orders", { method: "POST", body: JSON.stringify(body) });
     toast(r.message || ("Создан " + r.id));
-    if (r.signal) playBeep();
+    
     render();
   } catch (e) { toast(e.message || "Ошибка сервера", true); }
 };
 window.ordSend = async (id) => {
-  try { toast((await api("/orders/" + id + "/send-to-assembly", { method: "POST" })).message); playBeep(); render(); }
+  try { toast((await api("/orders/" + id + "/send-to-assembly", { method: "POST" })).message); render(); }
   catch (e) { toast(e.message, true); }
 };
 window.ordCancel = async (id) => {
@@ -1724,34 +1724,8 @@ function playBeep() {
 let signalTimer = null;
 let signalKnown = null;
 function startSignalPoll() {
-  if (signalTimer) clearInterval(signalTimer);
-  if (!user || (user.role !== "supervisor" && user.role !== "warehouse" && user.role !== "admin")) return;
-  // первый опрос только запоминает текущие заказы без звука
-  signalKnown = null;
-  const tick = async () => {
-    try {
-      const sigs = await api("/tsd/signals");
-      const ids = (sigs || []).map(s => s.order_id || s.id).filter(Boolean);
-      if (signalKnown === null) {
-        signalKnown = new Set(ids);
-        return;
-      }
-      for (const id of ids) {
-        if (!signalKnown.has(id)) {
-          signalKnown.add(id);
-          playBeep();
-          try { toast("Новый заказ на сборку: " + id); } catch (_) {}
-          const el = document.getElementById("signal-banner");
-          if (el) {
-            el.style.display = "block";
-            el.textContent = "🔔 Новый заказ: " + id + " — откройте СБОРКА";
-          }
-        }
-      }
-    } catch (_) {}
-  };
-  tick();
-  signalTimer = setInterval(tick, 4000);
+  // отключено: без фона /api/tsd/signals — меньше 429, без звука/вибрации о новых заказах
+  if (signalTimer) { clearInterval(signalTimer); signalTimer = null; }
 }
 
 if (token && user) {
