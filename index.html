@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="apple-mobile-web-app-capable" content="no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Домовой" />
   <meta name="theme-color" content="#0c1210" />
-  <meta name="mobile-web-app-capable" content="no" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
@@ -16,7 +16,7 @@
       <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="styles.css?v=20261102kb" />
+<link rel="stylesheet" href="styles.css?v=20261102app" />
 </head>
 <body style="padding:0;margin:0;">
   <div id="screen-login" class="screen active">
@@ -28,14 +28,10 @@
       <form id="login-form" autocomplete="on">
         <label for="login-id">Учётная запись</label>
         <input id="login-id" name="username" type="text" placeholder="us000001"
-          autocomplete="username" autocapitalize="off" autocorrect="off"
-          readonly
-          onfocus="this.removeAttribute('readonly');" />
+          autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" />
         <label for="login-pass">Пароль</label>
         <input id="login-pass" name="password" type="password" placeholder="Пароль"
-          autocomplete="current-password"
-          readonly
-          onfocus="this.removeAttribute('readonly');" />
+          autocomplete="current-password" />
         <button type="submit" class="btn btn-primary btn-block">Войти</button>
       </form>
       <div id="login-err" class="error hidden"></div>
@@ -76,6 +72,6 @@ if (window.caches && caches.keys) {
   });
 }
 </script>
-<script src="app.js?v=20261102kb"></script>
+<script src="app.js?v=20261102app"></script>
 </body>
 </html>

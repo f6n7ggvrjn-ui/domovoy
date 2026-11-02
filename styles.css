@@ -254,35 +254,13 @@ th { font-weight: 700; color: var(--muted); font-size: 0.8rem; text-transform: u
 
 
 
-/* === iPad / iPhone PWA: поля ввода ДОЛЖНЫ работать === */
-html, body {
-  -webkit-text-size-adjust: 100%;
-  touch-action: pan-x pan-y;
-}
-input, textarea, select, button {
-  -webkit-user-select: text !important;
-  user-select: text !important;
-  pointer-events: auto !important;
-  -webkit-touch-callout: default !important;
-  touch-action: manipulation !important;
-  font-size: 16px !important; /* критично для iOS */
+/* Ввод в standalone PWA */
+input, textarea, select {
+  font-size: 16px !important;
+  -webkit-user-select: text;
+  user-select: text;
+  pointer-events: auto;
   -webkit-appearance: none;
   appearance: none;
 }
-input, textarea, select {
-  background: var(--bg-input) !important;
-  color: var(--text) !important;
-  opacity: 1 !important;
-  position: relative;
-  z-index: 20;
-}
-/* убрать transform у предков экранов — iOS теряет фокус */
-.screen, .screen.active, .login-card, .content, .card, .modal-back, .modal-card {
-  -webkit-transform: none !important;
-  transform: none !important;
-  filter: none !important;
-  backdrop-filter: none !important;
-}
-#toast {
-  pointer-events: none !important;
-}
+#toast { pointer-events: none; }
