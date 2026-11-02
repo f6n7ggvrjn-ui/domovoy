@@ -9,6 +9,29 @@ function setWarehouse(code) {
 }
 
 
+
+function fixIosInputs(root) {
+  try {
+    const scope = root || document;
+    scope.querySelectorAll("input, textarea, select").forEach(function (el) {
+      if (el.dataset.iosFix) return;
+      el.dataset.iosFix = "1";
+      // iOS: сначала readonly, при фокусе снимаем — появляется клавиатура
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+        if (!el.hasAttribute("readonly")) {
+          el.setAttribute("readonly", "readonly");
+        }
+        el.addEventListener("focus", function onF() {
+          el.removeAttribute("readonly");
+        });
+        el.addEventListener("touchstart", function () {
+          el.removeAttribute("readonly");
+        }, { passive: true });
+      }
+    });
+  } catch (_) {}
+}
+
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -65,6 +88,7 @@ function show(name) {
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   document.getElementById("screen-" + name).classList.add("active");
   if (name === "app") render();
+  setTimeout(function(){ fixIosInputs(document); }, 50);
 }
 
 document.getElementById("login-form").onsubmit = async (e) => {
@@ -194,6 +218,7 @@ async function renderPage() {
   }
 }
 function afterRender() {
+  setTimeout(function(){ fixIosInputs(document.getElementById('content') || document); }, 30);
   if (document.getElementById("pct-ex")) {
     api("/finance/settings").then(s => {
       document.getElementById("pct-ex").value = s.pct_executor;
