@@ -1024,9 +1024,9 @@ async function renderEmployees() {
     <div class="card" style="border-color:var(--primary);margin-bottom:1rem">
       <div class="card-title">Изменить ${window._empEditId}</div>
       <label>ФИО</label>
-      <input id="edit-name" type="text" value="${(window._empEditName||"").replace(/"/g,"&quot;")}" autocomplete="off" />
+      <input id="edit-name" type="text" value="${(window._empEditName||"").replace(/"/g,"&quot;")}" autocomplete="off" autocorrect="off" autocapitalize="words" />
       <label>Новый пароль (оставьте пустым, если не менять)</label>
-      <input id="edit-pass" type="password" placeholder="минимум 4 символа" autocomplete="new-password" />
+      <input id="edit-pass" type="password" placeholder="минимум 4 символа" autocomplete="off" />
       <label>Роль</label>
       <select id="edit-role">
         <option value="">— не менять —</option>
