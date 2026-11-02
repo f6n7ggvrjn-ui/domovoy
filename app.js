@@ -980,6 +980,41 @@ async function renderEmployees() {
   const next = await api("/employees/next-id");
   return `
     <div class="page-h"><h1>Сотрудники</h1></div>
+    ${window._empEditId ? `
+    <div class="card" style="border:2px solid var(--primary);margin-bottom:1rem">
+      <div class="card-title">Изменить сотрудника ${window._empEditId}</div>
+      <form onsubmit="event.preventDefault();empEditSave('${window._empEditId}');return false;">
+        <label>ФИО</label>
+        <input id="edit-name" type="text" value="${(window._empEditName||"").replace(/"/g,"&quot;")}" autocomplete="off" autocorrect="off" />
+        <label>Новый пароль (пусто = не менять)</label>
+        <input id="edit-pass" type="text" placeholder="минимум 4 символа" autocomplete="off" />
+        <label>Роль</label>
+        <select id="edit-role">
+          <option value="">— не менять —</option>
+          <option value="supervisor">Старший смены</option>
+          <option value="order_manager">CRM-менеджер</option>
+          <option value="cleaner">Клинер</option>
+          <option value="handyman">Мастер на все руки</option>
+          <option value="admin">Админ</option>
+        </select>
+        <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+          <button type="button" class="btn btn-ghost btn-block" onclick="empEditCancel()">Отмена</button>
+          <button type="submit" class="btn btn-primary btn-block">Сохранить изменения</button>
+        </div>
+      </form>
+    </div>` : ""}
+    ${window._empBlockId ? `
+    <div class="card" style="border:2px solid var(--danger);margin-bottom:1rem">
+      <div class="card-title">Блокировка ${window._empBlockId}</div>
+      <form onsubmit="event.preventDefault();empBlockSave('${window._empBlockId}');return false;">
+        <label>Причина (только для админа)</label>
+        <input id="block-reason" type="text" placeholder="причина" autocomplete="off" />
+        <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+          <button type="button" class="btn btn-ghost btn-block" onclick="empBlockCancel()">Отмена</button>
+          <button type="submit" class="btn btn-danger btn-block">Заблокировать</button>
+        </div>
+      </form>
+    </div>` : ""}
     <div class="card">
       <div class="card-title">Поиск по учётке</div>
       <input id="emp-search" placeholder="us000003" onkeydown="if(event.key==='Enter')empSearch()" />
@@ -1002,7 +1037,7 @@ async function renderEmployees() {
         <option value="order_manager">CRM-менеджер</option>
         <option value="admin">Админ</option>
       </select>
-      <button class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
+      <button type="button" class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
     </div>
     <div class="table-wrap" style="margin-top:1rem"><table>
       <thead><tr><th>ID</th><th>ФИО</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
@@ -1013,47 +1048,16 @@ async function renderEmployees() {
           <td>${u.role_label}</td>
           <td>${u.status}</td>
           <td style="white-space:nowrap">
-            <button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${(u.full_name||"").replace(/'/g,"")}')">Изменить</button>
-            ${u.status !== "blocked" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empBlock('${u.id}')">Блок</button>` : ""}
-            ${u.status === "blocked" ? `<button class="btn btn-accent btn-sm" onclick="empUnblock('${u.id}')">Разблок</button>` : ""}
-            ${u.status === "fired" ? `<button class="btn btn-accent btn-sm" onclick="empRestore('${u.id}')">Восстановить</button>` : ""}
-            <button class="btn btn-ghost btn-sm" onclick="empHist('${u.id}')">История</button>
-            ${u.status !== "fired" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Увол.</button>` : ""}
+            <button type="button" class="btn btn-ghost btn-sm" onclick='empEdit(${JSON.stringify(u.id)},${JSON.stringify(u.full_name||"")})'>Изменить</button>
+            ${u.status !== "blocked" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" type="button" onclick="empBlock('${u.id}')">Блок</button>` : ""}
+            ${u.status === "blocked" ? `<button class="btn btn-accent btn-sm" type="button" onclick="empUnblock('${u.id}')">Разблок</button>` : ""}
+            ${u.status === "fired" ? `<button class="btn btn-accent btn-sm" type="button" onclick="empRestore('${u.id}')">Восстановить</button>` : ""}
+            <button class="btn btn-ghost btn-sm" type="button" onclick="empHist('${u.id}')">История</button>
+            ${u.status !== "fired" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" type="button" onclick="empDel('${u.id}')">Увол.</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>
-    
-    ${window._empEditId ? `
-    <div class="card" style="border-color:var(--primary);margin-bottom:1rem">
-      <div class="card-title">Изменить ${window._empEditId}</div>
-      <label>ФИО</label>
-      <input id="edit-name" type="text" value="${(window._empEditName||"").replace(/"/g,"&quot;")}" autocomplete="off" autocorrect="off" autocapitalize="words" />
-      <label>Новый пароль (оставьте пустым, если не менять)</label>
-      <input id="edit-pass" type="password" placeholder="минимум 4 символа" autocomplete="off" />
-      <label>Роль</label>
-      <select id="edit-role">
-        <option value="">— не менять —</option>
-        <option value="supervisor">Старший смены</option>
-        <option value="order_manager">CRM-менеджер</option>
-        <option value="cleaner">Клинер</option>
-        <option value="handyman">Мастер на все руки</option>
-        <option value="admin">Админ</option>
-      </select>
-      <div style="display:flex;gap:0.5rem">
-        <button type="button" class="btn btn-ghost btn-block" onclick="empEditCancel()">Отмена</button>
-        <button type="button" class="btn btn-primary btn-block" onclick="empEditSave('${window._empEditId}')">Сохранить</button>
-      </div>
-    </div>` : ""}
-    ${window._empBlockId ? `
-    <div class="card" style="border-color:var(--danger);margin-bottom:1rem">
-      <div class="card-title">Блокировка ${window._empBlockId}</div>
-      <label>Причина (только для админа)</label>
-      <input id="block-reason" type="text" placeholder="причина" autocomplete="off" />
-      <div style="display:flex;gap:0.5rem">
-        <button type="button" class="btn btn-ghost btn-block" onclick="empBlockCancel()">Отмена</button>
-        <button type="button" class="btn btn-danger btn-block" onclick="empBlockSave('${window._empBlockId}')">Заблокировать</button>
-      </div>
-    </div>` : ""}
+
     <div id="emp-hist-box"></div>`;
 }
 window.empSave = async () => {
@@ -1083,16 +1087,22 @@ window.empEditCancel = () => {
 };
 window.empEditSave = async (id) => {
   try {
-    const body = { full_name: document.getElementById("edit-name").value.trim() };
-    const pwd = document.getElementById("edit-pass").value;
-    const role = document.getElementById("edit-role").value;
+    const nameEl = document.getElementById("edit-name");
+    const passEl = document.getElementById("edit-pass");
+    const roleEl = document.getElementById("edit-role");
+    if (!nameEl) { toast("Форма не найдена", true); return; }
+    const body = { full_name: nameEl.value.trim() };
+    if (!body.full_name) { toast("Укажите ФИО", true); return; }
+    const pwd = passEl ? passEl.value.trim() : "";
+    const role = roleEl ? roleEl.value : "";
     if (pwd) body.password = pwd;
     if (role) body.role = role;
     await api("/employees/" + id, { method: "PATCH", body: JSON.stringify(body) });
     window._empEditId = null;
+    window._empEditName = "";
     toast("Сохранено");
     render();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(e.message || "Ошибка сохранения", true); }
 };
 window.empBlock = (id) => {
   window._empBlockId = id;
@@ -1147,11 +1157,11 @@ window.empSearch = async () => {
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:0.35rem">
             <button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${nameSafe}')">Изменить</button>
-            ${u.status !== "blocked" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empBlock('${u.id}')">Блокировать</button>` : ""}
-            ${u.status === "blocked" ? `<button class="btn btn-accent btn-sm" onclick="empUnblock('${u.id}')">Разблок</button>` : ""}
-            ${u.status === "fired" ? `<button class="btn btn-accent btn-sm" onclick="empRestore('${u.id}')">Восстановить</button>` : ""}
-            <button class="btn btn-ghost btn-sm" onclick="empHist('${u.id}')">История</button>
-            ${u.status !== "fired" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" onclick="empDel('${u.id}')">Увол.</button>` : ""}
+            ${u.status !== "blocked" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" type="button" onclick="empBlock('${u.id}')">Блокировать</button>` : ""}
+            ${u.status === "blocked" ? `<button class="btn btn-accent btn-sm" type="button" onclick="empUnblock('${u.id}')">Разблок</button>` : ""}
+            ${u.status === "fired" ? `<button class="btn btn-accent btn-sm" type="button" onclick="empRestore('${u.id}')">Восстановить</button>` : ""}
+            <button class="btn btn-ghost btn-sm" type="button" onclick="empHist('${u.id}')">История</button>
+            ${u.status !== "fired" && u.id !== user.id ? `<button class="btn btn-danger btn-sm" type="button" onclick="empDel('${u.id}')">Увол.</button>` : ""}
           </div>
         </div>
       </div>`;
