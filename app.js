@@ -96,11 +96,11 @@ function navItems() {
       ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
       ["shift", "Смена"], ["logistics", "Логистика"],
       ["employees", "Сотрудники"], ["warehouses", "Склады"], ["missing", "Пропажи"],
+      ["payouts", "Выплаты"], ["crmReport", "Отчёт CRM"],
       ["settings", "Настройки"], ["qr", "QR"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "supervisor" || user.role === "warehouse") {
-    // старший смены = склад + назначение исполнителей в заказах
     return [
       ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"],
       ["logistics", "Логистика"], ["board", "Очередь"],
@@ -109,10 +109,14 @@ function navItems() {
   }
   if (user.role === "order_manager") {
     return [
-      ["orders", "Заказы"], ["orderHistory", "История"], ["profile", "Профиль"],
+      ["cabinet", "Кабинет"], ["orders", "Заказы"], ["orderHistory", "История"],
+      ["fines", "Штрафы за ошибки"], ["profile", "Профиль"],
     ];
   }
-  return [["home", "Мои заказы"], ["orderHistory", "История заказов"], ["profile", "Профиль"]];
+  return [
+    ["cabinet", "Кабинет"], ["home", "Мои заказы"], ["orderHistory", "История"],
+    ["fines", "Штрафы за ошибки"], ["profile", "Профиль"],
+  ];
 }
 
 function render() {
@@ -157,6 +161,10 @@ async function renderPage() {
     case "points": return renderPoints();
     case "returnbag": return renderReturnBag();
     case "orderHistory": return renderOrderHistory();
+    case "cabinet": return renderCabinet();
+    case "payouts": return renderPayouts();
+    case "crmReport": return renderCrmReport();
+    case "fines": return renderMyFines();
     case "profile": return renderProfile();
     case "settings": return renderSettings();
     case "qr": return renderQrTool();
@@ -173,6 +181,14 @@ async function renderPage() {
   }
 }
 function afterRender() {
+  if (document.getElementById("pct-ex")) {
+    api("/finance/settings").then(s => {
+      document.getElementById("pct-ex").value = s.pct_executor;
+      document.getElementById("pct-mg").value = s.pct_manager;
+      document.getElementById("pct-co").value = s.pct_company;
+    }).catch(() => {});
+  }
+
   const inp = document.querySelector(".scan-box input");
   if (inp) inp.focus();
 }
@@ -294,7 +310,7 @@ async function renderOrderHistory() {
       <p style="color:var(--muted);font-size:0.85rem">${isAdmin ? "Завершённые за 3 месяца" : "Завершённые в текущем месяце"}</p>
     </div>
     ${orders.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Завершён</th></tr></thead>
+      <thead><tr><th>Заказ</th><th>Адрес</th><th>Сумма</th><th>Статус</th><th>Завершён</th></tr></thead>
       <tbody>${orders.map(o => `
         <tr>
           <td>${o.id}${o.bag_id ? "<br><small>"+o.bag_id+"</small>" : ""}</td>
@@ -780,7 +796,7 @@ async function renderBoard() {
   return `
     <div class="page-h"><h1>Очередь / статусы</h1></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Время</th><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Сумка</th><th>Готовность</th></tr></thead>
+      <thead><tr><th>Время</th><th>Заказ</th><th>Адрес</th><th>Сумма</th><th>Статус</th><th>Сумка</th><th>Готовность</th></tr></thead>
       <tbody>${rows.map(r => `
         <tr>
           <td>${r.order_id || r.id}</td>
@@ -867,6 +883,8 @@ async function renderOrdersAdmin() {
       <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>` : `<p style="color:var(--muted);font-size:0.9rem;margin:0.5rem 0">Исполнителя назначает админ или старший смены</p>`}
       <label>Время заказа *</label>
       <input id="ord-time" type="datetime-local" />
+      <label>Сумма заказа (₽)${user.role === "admin" ? "" : " *"}</label>
+      <input id="ord-pay" type="number" min="1" step="1" placeholder="например 5000" />
       <p style="color:var(--muted);font-size:0.8rem;margin:-0.5rem 0 0.75rem">Время — Екатеринбург (UTC+5). Сумка готова за 30 мин до заказа</p>
       <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
     </div>
@@ -885,7 +903,7 @@ async function renderOrdersAdmin() {
             ${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
             ${o.status === "completion_pending" && user.role === "admin" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
             ${canAssign && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}
-            ${(user.role === "admin" || user.role === "order_manager" || user.role === "supervisor") && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}
+            ${user.role === "admin" ${user.role === "admin" && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}${user.role === "admin" && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""} !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>`;
@@ -896,6 +914,12 @@ window.ordCreate = async (send) => {
     if (!addr.trim()) { toast("Укажите адрес", true); return; }
     const timeEl = document.getElementById("ord-time");
     const execEl = document.getElementById("ord-exec");
+    const payEl = document.getElementById("ord-pay");
+    const payRaw = payEl ? payEl.value : "";
+    const payment_amount = payRaw === "" ? null : parseInt(payRaw, 10);
+    if (user.role !== "admin") {
+      if (!payment_amount || payment_amount <= 0) { toast("Укажите сумму заказа", true); return; }
+    }
     const body = {
       client_name: (document.getElementById("ord-client") || {}).value?.trim() || null,
       address: addr.trim(),
@@ -904,6 +928,7 @@ window.ordCreate = async (send) => {
       executor_id: execEl ? (execEl.value || null) : null,
       scheduled_at: timeEl && timeEl.value ? timeEl.value : null,
       cutoff_minutes: 30,
+      payment_amount: payment_amount && payment_amount > 0 ? payment_amount : null,
       send_to_assembly: !!send,
     };
     const r = await api("/orders", { method: "POST", body: JSON.stringify(body) });
@@ -958,7 +983,7 @@ async function renderEmployees() {
         <option value="cleaner">Клинер</option>
         <option value="handyman">Мастер на все руки</option>
         <option value="supervisor">Старший смены</option>
-        <option value="order_manager">Менеджер обработки заказов</option>
+        <option value="order_manager">CRM-менеджер</option>
         <option value="admin">Админ</option>
       </select>
       <button class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
@@ -1000,7 +1025,7 @@ window.empEdit = async (id, name) => {
   const nn = prompt("ФИО:", name);
   if (nn === null) return;
   const pwd = prompt("Новый пароль (пусто = не менять):");
-  const role = prompt("Роль (supervisor/order_manager/cleaner/handyman/admin, пусто = не менять):");
+  const role = prompt("Роль (supervisor/order_manager(CRM)/cleaner/handyman/admin, пусто = не менять):");
   try {
     const body = { full_name: nn };
     if (pwd) body.password = pwd;
@@ -1627,6 +1652,21 @@ async function renderSettings() {
       <button class="btn btn-ghost btn-block" onclick="page='receive';render()">Приёмка</button>
     </div>
     <div class="card">
+      <div class="card-title">Доли по заказам (%)</div>
+      <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.5rem">Действует на новые заказы. Сумма = 100.</p>
+      <label>Исполнитель</label><input id="pct-ex" type="number" min="0" max="100" />
+      <label>CRM-менеджер</label><input id="pct-mg" type="number" min="0" max="100" />
+      <label>Домовой</label><input id="pct-co" type="number" min="0" max="100" />
+      <button class="btn btn-primary btn-block" onclick="financeSavePct()">Сохранить доли</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Штраф сотруднику</div>
+      <label>Учётка (us…)</label><input id="fine-user" placeholder="us000003" />
+      <label>Сумма ₽</label><input id="fine-amount" type="number" min="1" />
+      <label>За что</label><input id="fine-reason" placeholder="основание" />
+      <button class="btn btn-danger btn-block" onclick="fineCreate()">Назначить штраф</button>
+    </div>
+    <div class="card">
       <div class="card-title">Резервная копия</div>
       <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">
         Скачайте JSON со всеми данными. Храните у себя (на Free Render база может обнулиться).
@@ -1733,3 +1773,164 @@ if (token && user) {
 } else {
   show("login");
 }
+
+
+async function renderCabinet() {
+  const d = await api("/finance/cabinet");
+  if (d.role === "order_manager") {
+    return `
+      <div class="page-h"><h1>Личный кабинет</h1>
+        <p style="color:var(--muted)">Здравствуйте, ${d.full_name}!</p></div>
+      <div class="tsd-grid" style="grid-template-columns:1fr 1fr;gap:0.75rem">
+        <div class="card"><div class="card-title">Приведено заказов</div><div style="font-size:1.75rem;font-weight:800">${d.brought}</div></div>
+        <div class="card"><div class="card-title">Выполнено</div><div style="font-size:1.75rem;font-weight:800">${d.done}</div></div>
+        <div class="card"><div class="card-title">Заработано (месяц)</div><div style="font-size:1.75rem;font-weight:800;color:var(--primary)">${d.earned} ₽</div></div>
+        <div class="card"><div class="card-title">Ожидает выплаты</div><div style="font-size:1.75rem;font-weight:800">${d.awaiting_payout} ₽</div></div>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <div class="card-title">Мои разделы</div>
+        <button class="btn btn-ghost btn-block" onclick="page='orders';render()">Создать / заказы</button>
+        <button class="btn btn-ghost btn-block" onclick="page='orderHistory';render()">История заказов</button>
+        <button class="btn btn-ghost btn-block" onclick="page='fines';render()">Штрафы за ошибки${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <div class="card-title">Последние заказы</div>
+        ${d.orders && d.orders.length ? `<div class="table-wrap"><table>
+          <thead><tr><th>Заказ</th><th>Сумма</th><th>Статус</th></tr></thead>
+          <tbody>${d.orders.map(o => `<tr>
+            <td>${o.id}<br><small>${o.address || ""}</small></td>
+            <td>${o.payment_amount != null ? o.payment_amount + " ₽" : "—"}</td>
+            <td>${o.status_label || o.status}</td>
+          </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Нет заказов</p>"}
+      </div>`;
+  }
+  // executor
+  return `
+    <div class="page-h"><h1>Личный кабинет</h1>
+      <p style="color:var(--muted)">Здравствуйте, ${d.full_name}!</p></div>
+    <div class="tsd-grid" style="grid-template-columns:1fr 1fr;gap:0.75rem">
+      <div class="card"><div class="card-title">Активные</div><div style="font-size:1.75rem;font-weight:800">${d.active || 0}</div></div>
+      <div class="card"><div class="card-title">Выполнено</div><div style="font-size:1.75rem;font-weight:800">${d.done || 0}</div></div>
+      <div class="card"><div class="card-title">Заработано (месяц)</div><div style="font-size:1.75rem;font-weight:800;color:var(--primary)">${d.earned || 0} ₽</div></div>
+      <div class="card"><div class="card-title">Ожидает выплаты</div><div style="font-size:1.75rem;font-weight:800">${d.awaiting_payout || 0} ₽</div></div>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <button class="btn btn-ghost btn-block" onclick="page='home';render()">Мои заказы</button>
+      <button class="btn btn-ghost btn-block" onclick="page='fines';render()">Штрафы за ошибки</button>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <div class="card-title">Последние заказы</div>
+      ${d.orders && d.orders.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Заказ</th><th>Сумма</th><th>Статус</th></tr></thead>
+        <tbody>${d.orders.map(o => `<tr>
+          <td>${o.id}<br><small>${o.address || ""}</small></td>
+          <td>${o.payment_amount != null ? o.payment_amount + " ₽" : "—"}</td>
+          <td>${o.status_label || o.status}</td>
+        </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Нет заказов</p>"}
+    </div>`;
+}
+
+async function renderPayouts() {
+  const rows = await api("/finance/payouts");
+  return `
+    <div class="page-h"><h1>Выплаты</h1>
+      <p style="color:var(--muted);font-size:0.85rem">Сотрудники с балансом к выплате (начисления − штрафы)</p></div>
+    ${rows.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Сотрудник</th><th>Начислено</th><th>Штрафы</th><th>К выплате</th><th></th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${r.full_name}<br><small>${r.role_label} · ${r.user_id}</small></td>
+        <td>${r.gross} ₽</td>
+        <td>${r.fines} ₽</td>
+        <td style="font-weight:700">${r.to_pay} ₽</td>
+        <td><button class="btn btn-primary btn-sm" onclick="doPayout('${r.user_id}')">Выплачено</button></td>
+      </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Некого выплачивать</p>"}
+    <div class="card" style="margin-top:1rem">
+      <button class="btn btn-ghost btn-block" onclick="downloadFinanceCsv()">Скачать Excel/CSV</button>
+    </div>`;
+}
+window.doPayout = async (uid) => {
+  if (!confirm("Отметить выплату для " + uid + "?")) return;
+  try { toast((await api("/finance/payouts/" + uid, { method: "POST" })).message); render(); }
+  catch (e) { toast(e.message, true); }
+};
+window.downloadFinanceCsv = async () => {
+  try {
+    const res = await fetch("/api/finance/export.csv", { headers: { Authorization: "Bearer " + token } });
+    if (!res.ok) throw new Error("Ошибка выгрузки");
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "domovoy-finance.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast("Файл скачан");
+  } catch (e) { toast(e.message, true); }
+};
+
+async function renderCrmReport() {
+  const d = await api("/finance/crm-report");
+  return `
+    <div class="page-h"><h1>Отчёт по CRM</h1>
+      <p style="color:var(--muted)">Месяц ${d.month_key} · доли ${d.pct.pct_executor}/${d.pct.pct_manager}/${d.pct.pct_company}</p></div>
+    <div class="tsd-grid" style="grid-template-columns:1fr 1fr;gap:0.75rem">
+      <div class="card"><div class="card-title">Менеджеров</div><div style="font-size:1.5rem;font-weight:800">${d.managers_count}</div></div>
+      <div class="card"><div class="card-title">Всего заявок</div><div style="font-size:1.5rem;font-weight:800">${d.total_orders}</div></div>
+      <div class="card"><div class="card-title">Выполнено</div><div style="font-size:1.5rem;font-weight:800">${d.total_done}</div></div>
+      <div class="card"><div class="card-title">Комиссии менеджерам</div><div style="font-size:1.5rem;font-weight:800">${d.total_manager_commission} ₽</div></div>
+      <div class="card" style="grid-column:1/-1"><div class="card-title">Домовой заработано (месяц)</div>
+        <div style="font-size:1.75rem;font-weight:800;color:var(--primary)">${d.company_earned_month} ₽</div></div>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <div class="card-title">Рейтинг менеджеров</div>
+      ${d.rating.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Менеджер</th><th>Заказы</th><th>Комиссия</th></tr></thead>
+        <tbody>${d.rating.map(r => `<tr>
+          <td>${r.full_name}</td><td>${r.orders}</td><td>${r.commission} ₽</td>
+        </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Нет данных</p>"}
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <div class="card-title">История месяцев (Домовой)</div>
+      ${d.company_history && d.company_history.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Месяц</th><th>Сумма</th><th>Заказов</th></tr></thead>
+        <tbody>${d.company_history.map(h => `<tr>
+          <td>${h.month_key}</td><td>${h.amount} ₽</td><td>${h.orders_count || "—"}</td>
+        </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Пока нет закрытых месяцев</p>"}
+    </div>`;
+}
+
+async function renderMyFines() {
+  const rows = await api("/finance/fines/my");
+  return `
+    <div class="page-h"><h1>Штрафы за ошибки</h1>
+      <p style="color:var(--muted);font-size:0.85rem">Сумма и основание. Кто назначил — не отображается.</p></div>
+    ${rows.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Сумма</th><th>За что</th><th>Статус</th></tr></thead>
+      <tbody>${rows.map(f => `<tr>
+        <td style="font-weight:700">${f.amount} ₽</td>
+        <td>${f.reason}</td>
+        <td>${f.status === "open" ? "Удержится при выплате" : "Учтён"}</td>
+      </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Штрафов нет</p>"}`;
+}
+
+
+window.financeSavePct = async () => {
+  try {
+    const r = await api("/finance/settings", { method: "POST", body: JSON.stringify({
+      pct_executor: parseInt(document.getElementById("pct-ex").value, 10),
+      pct_manager: parseInt(document.getElementById("pct-mg").value, 10),
+      pct_company: parseInt(document.getElementById("pct-co").value, 10),
+    })});
+    toast("Доли сохранены: " + r.pct_executor + "/" + r.pct_manager + "/" + r.pct_company);
+  } catch (e) { toast(e.message, true); }
+};
+
+window.fineCreate = async () => {
+  try {
+    const r = await api("/finance/fines", { method: "POST", body: JSON.stringify({
+      user_id: document.getElementById("fine-user").value.trim(),
+      amount: parseInt(document.getElementById("fine-amount").value, 10),
+      reason: document.getElementById("fine-reason").value.trim(),
+    })});
+    toast(r.message); render();
+  } catch (e) { toast(e.message, true); }
+};

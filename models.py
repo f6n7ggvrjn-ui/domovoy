@@ -85,8 +85,6 @@ class Bag(Base):
     executor_id = Column(String(20), nullable=True)
     transfer_point = Column(String(100), nullable=True)
     assembled_by = Column(String(20), nullable=True)
-    cutoff_minutes = Column(Integer, default=30)  # минут до заказа, когда сумка должна быть готова
-    scheduled_at = Column(DateTime, nullable=True)  # время выезда/заказа
     assembly_started_at = Column(DateTime, nullable=True)
     assembly_finished_at = Column(DateTime, nullable=True)
     issued_at = Column(DateTime, nullable=True)
@@ -101,6 +99,7 @@ class Order(Base):
     address = Column(String(500), nullable=False)
     cleaning_type = Column(String(100), nullable=True)
     object_info = Column(Text, nullable=True)
+    payment_amount = Column(Integer, nullable=True)  # сумма к оплате, рубли
     executor_id = Column(String(20), nullable=True)
     bag_id = Column(String(20), nullable=True)
     status = Column(String(40), default="new")
@@ -115,6 +114,10 @@ class Order(Base):
     completed_by = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     created_by = Column(String(20), nullable=True)
+    # финансы: сумма и % на момент создания
+    pct_executor = Column(Integer, nullable=True)
+    pct_manager = Column(Integer, nullable=True)
+    pct_company = Column(Integer, nullable=True)
 
 
 class TransferPoint(Base):
@@ -201,3 +204,46 @@ class ShipmentItem(Base):
     packed_by = Column(String(20), nullable=True)
     received_by = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+    key = Column(String(50), primary_key=True)
+    value = Column(String(200), nullable=False)
+
+
+class CommissionEntry(Base):
+    """Начисление доли по заказу: manager / executor / company."""
+    __tablename__ = "commission_entries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(String(30), nullable=False)
+    user_id = Column(String(20), nullable=True)  # null для company
+    party = Column(String(20), nullable=False)  # manager / executor / company
+    amount = Column(Integer, nullable=False)  # рубли
+    status = Column(String(20), default="awaiting")  # awaiting / paid / reversed
+    month_key = Column(String(7), nullable=True)  # YYYY-MM когда paid или для company
+    created_at = Column(DateTime, default=datetime.utcnow)
+    paid_at = Column(DateTime, nullable=True)
+    paid_by = Column(String(20), nullable=True)
+    note = Column(String(200), nullable=True)
+
+
+class Fine(Base):
+    __tablename__ = "fines"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(20), nullable=False)
+    amount = Column(Integer, nullable=False)
+    reason = Column(Text, nullable=False)
+    created_by = Column(String(20), nullable=False)
+    status = Column(String(20), default="open")  # open / applied
+    created_at = Column(DateTime, default=datetime.utcnow)
+    applied_at = Column(DateTime, nullable=True)
+
+
+class CompanyMonth(Base):
+    """Закрытые месяцы доли Домового."""
+    __tablename__ = "company_months"
+    month_key = Column(String(7), primary_key=True)  # YYYY-MM
+    amount = Column(Integer, default=0)
+    orders_count = Column(Integer, default=0)
+    closed_at = Column(DateTime, nullable=True)

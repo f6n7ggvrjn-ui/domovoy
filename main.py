@@ -12,8 +12,7 @@ import os
 try:
     from database import Base, engine, get_db, SessionLocal
     from models import (
-        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog, Warehouse, ShiftEntry, Shipment, ShipmentItem
-    )
+        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog, Warehouse, ShiftEntry, Shipment, ShipmentItem, AppSetting, CommissionEntry, Fine, CompanyMonth)
     from auth import (
         hash_password, verify_password, make_token, get_current_user, require_roles, ROLE_LABELS
     )
@@ -24,8 +23,7 @@ try:
 except ImportError:
     from .database import Base, engine, get_db, SessionLocal
     from .models import (
-        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog, Warehouse, ShiftEntry, Shipment, ShipmentItem
-    )
+        User, Equipment, EquipmentType, Cell, Bag, Order, Operation, MissingReport, TransferPoint, UserChangeLog, Warehouse, ShiftEntry, Shipment, ShipmentItem, AppSetting, CommissionEntry, Fine, CompanyMonth)
     from .auth import (
         hash_password, verify_password, make_token, get_current_user, require_roles, ROLE_LABELS
     )
@@ -1083,6 +1081,163 @@ def restore_missing(data: MissingActionIn, db: Session = Depends(get_db), user: 
     db.commit()
     return {"ok": True, "message": f"Возвращено на учёт в {cell}"}
 
+
+# ---------- finance / CRM ----------
+def _month_key(dt=None) -> str:
+    d = dt or now_app()
+    return f"{d.year:04d}-{d.month:02d}"
+
+def get_pct_settings(db: Session):
+    defaults = {"pct_executor": 50, "pct_manager": 20, "pct_company": 30}
+    for k in list(defaults.keys()):
+        row = db.query(AppSetting).filter(AppSetting.key == k).first()
+        if row:
+            try:
+                defaults[k] = int(row.value)
+            except Exception:
+                pass
+    return defaults
+
+def set_pct_settings(db: Session, pe: int, pm: int, pc: int):
+    if pe + pm + pc != 100:
+        raise HTTPException(400, "Сумма процентов должна быть 100")
+    for k, v in [("pct_executor", pe), ("pct_manager", pm), ("pct_company", pc)]:
+        row = db.query(AppSetting).filter(AppSetting.key == k).first()
+        if row:
+            row.value = str(v)
+        else:
+            db.add(AppSetting(key=k, value=str(v)))
+    db.commit()
+
+def _rub_split(total: int, pe: int, pm: int, pc: int):
+    """Деление суммы в рублях без копеек; остаток — компании."""
+    total = int(total or 0)
+    a_ex = total * pe // 100
+    a_mg = total * pm // 100
+    a_co = total - a_ex - a_mg
+    return a_ex, a_mg, a_co
+
+def finance_on_order_create(db: Session, order: Order, creator: User):
+    """Менеджеру (создатель CRM) и компании — сразу; исполнителю позже."""
+    amount = int(order.payment_amount or 0)
+    if amount <= 0:
+        return
+    pe = order.pct_executor if order.pct_executor is not None else 50
+    pm = order.pct_manager if order.pct_manager is not None else 20
+    pc = order.pct_company if order.pct_company is not None else 30
+    a_ex, a_mg, a_co = _rub_split(amount, pe, pm, pc)
+
+    is_crm = creator.role == "order_manager"
+    if is_crm and a_mg > 0:
+        db.add(CommissionEntry(
+            order_id=order.id, user_id=creator.id, party="manager",
+            amount=a_mg, status="awaiting",
+        ))
+        a_co_total = a_co
+    else:
+        # без CRM-менеджера: доля менеджера уходит компании
+        a_co_total = a_co + a_mg
+
+    if a_co_total > 0:
+        db.add(CommissionEntry(
+            order_id=order.id, user_id=None, party="company",
+            amount=a_co_total, status="awaiting", month_key=_month_key(),
+        ))
+
+def finance_on_order_complete(db: Session, order: Order):
+    amount = int(order.payment_amount or 0)
+    if amount <= 0 or not order.executor_id:
+        return
+    # уже есть executor accrual?
+    exists = db.query(CommissionEntry).filter(
+        CommissionEntry.order_id == order.id,
+        CommissionEntry.party == "executor",
+        CommissionEntry.status != "reversed",
+    ).first()
+    if exists:
+        return
+    pe = order.pct_executor if order.pct_executor is not None else 50
+    pm = order.pct_manager if order.pct_manager is not None else 20
+    pc = order.pct_company if order.pct_company is not None else 30
+    a_ex, _, _ = _rub_split(amount, pe, pm, pc)
+    if a_ex > 0:
+        db.add(CommissionEntry(
+            order_id=order.id, user_id=order.executor_id, party="executor",
+            amount=a_ex, status="awaiting",
+        ))
+
+def finance_on_order_cancel(db: Session, order: Order):
+    rows = db.query(CommissionEntry).filter(
+        CommissionEntry.order_id == order.id,
+        CommissionEntry.status.in_(["awaiting", "paid"]),
+    ).all()
+    for r in rows:
+        r.status = "reversed"
+        r.note = (r.note or "") + "|cancel"
+
+def user_awaiting_balance(db: Session, user_id: str) -> int:
+    accr = db.query(CommissionEntry).filter(
+        CommissionEntry.user_id == user_id,
+        CommissionEntry.status == "awaiting",
+        CommissionEntry.party.in_(["manager", "executor"]),
+    ).all()
+    gross = sum(r.amount for r in accr)
+    fines = db.query(Fine).filter(Fine.user_id == user_id, Fine.status == "open").all()
+    fine_sum = sum(f.amount for f in fines)
+    return max(0, gross - fine_sum)
+
+def user_awaiting_gross(db: Session, user_id: str) -> int:
+    return sum(r.amount for r in db.query(CommissionEntry).filter(
+        CommissionEntry.user_id == user_id,
+        CommissionEntry.status == "awaiting",
+        CommissionEntry.party.in_(["manager", "executor"]),
+    ).all())
+
+def user_open_fines(db: Session, user_id: str) -> int:
+    return sum(f.amount for f in db.query(Fine).filter(Fine.user_id == user_id, Fine.status == "open").all())
+
+def company_month_amount(db: Session, month_key: str) -> int:
+    rows = db.query(CommissionEntry).filter(
+        CommissionEntry.party == "company",
+        CommissionEntry.status == "awaiting",
+        CommissionEntry.month_key == month_key,
+    ).all()
+    # also include non-reversed company for this month
+    return sum(r.amount for r in rows if r.status != "reversed")
+
+def ensure_month_rollover(db: Session):
+    """1-го числа предыдущий месяц уходит в CompanyMonth."""
+    cur = _month_key()
+    # все awaiting company с другим month_key → архив
+    others = db.query(CommissionEntry).filter(
+        CommissionEntry.party == "company",
+        CommissionEntry.status == "awaiting",
+        CommissionEntry.month_key != cur,
+    ).all()
+    by_m = {}
+    for r in others:
+        mk = r.month_key or "unknown"
+        by_m.setdefault(mk, []).append(r)
+    for mk, rows in by_m.items():
+        if mk == cur:
+            continue
+        total = sum(x.amount for x in rows)
+        orders = len({x.order_id for x in rows})
+        arch = db.query(CompanyMonth).filter(CompanyMonth.month_key == mk).first()
+        if not arch:
+            arch = CompanyMonth(month_key=mk, amount=0, orders_count=0)
+            db.add(arch)
+        arch.amount = (arch.amount or 0) + total
+        arch.orders_count = (arch.orders_count or 0) + orders
+        arch.closed_at = now_app()
+        for x in rows:
+            x.status = "paid"
+            x.paid_at = now_app()
+            x.note = (x.note or "") + "|month_close"
+    if others:
+        db.commit()
+
+
 # ---------- orders ----------
 def _next_order_id(db: Session) -> str:
     n = 1
@@ -1113,6 +1268,9 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
             ("late_minutes", "INTEGER"),
             ("signal_sent", "BOOLEAN DEFAULT 0"),
             ("warehouse_code", "VARCHAR(10)"),
+            ("pct_executor", "INTEGER"),
+            ("pct_manager", "INTEGER"),
+            ("pct_company", "INTEGER"),
             ("completion_requested_at", "DATETIME"),
             ("completed_at", "DATETIME"),
             ("completed_by", "VARCHAR(20)"),
@@ -1147,6 +1305,17 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
             # не валим заказ — просто без времени
             scheduled = None
 
+    amount = data.payment_amount
+    if amount is None or (isinstance(amount, int) and amount < 0):
+        amount = None
+    if user.role != "admin":
+        if not amount or int(amount) <= 0:
+            raise HTTPException(400, "Укажите сумму заказа (₽)")
+    amount = int(amount) if amount else 0
+
+    pct = get_pct_settings(db)
+    pe, pm, pc = pct["pct_executor"], pct["pct_manager"], pct["pct_company"]
+
     try:
         order = Order(id=oid, address=data.address.strip(), status=status)
         order.client_name = data.client_name
@@ -1159,8 +1328,16 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
         order.created_at = datetime.utcnow()
         order.created_by = user.id
         order.is_late = False
+        order.payment_amount = amount if amount > 0 else None
+        order.pct_executor = pe
+        order.pct_manager = pm
+        order.pct_company = pc
         db.add(order)
         db.flush()
+        try:
+            finance_on_order_create(db, order, user)
+        except Exception:
+            pass
         try:
             log_op(db, "order_created", user.id, order_id=oid)
         except Exception:
@@ -1207,7 +1384,7 @@ def request_complete(order_id: str, db: Session = Depends(get_db), user: User = 
     return {"ok": True, "message": "Запрос на завершение отправлен админу"}
 
 @app.post("/api/orders/{order_id}/confirm-complete")
-def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
@@ -1216,13 +1393,14 @@ def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = 
     order.status = "done"
     order.completed_at = now_app()
     order.completed_by = user.id
+    finance_on_order_complete(db, order)
     log_op(db, "complete_confirm", user.id, order_id=order.id)
     db.commit()
     return {"ok": True, "message": f"Заказ {order.id} завершён"}
 
 
 @app.post("/api/orders/{order_id}/cancel")
-def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager", "supervisor"))):
+def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
@@ -1248,6 +1426,7 @@ def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depe
                     bag.transfer_point = None
             # issued — сумка у исполнителя, разбор потом; только отвязать заказ
 
+    finance_on_order_cancel(db, order)
     order.status = "cancelled"
     order.completed_at = now_app()
     order.completed_by = user.id
@@ -2286,3 +2465,246 @@ def app_css():
         if os.path.isfile(p):
             return FileResponse(p)
     raise HTTPException(404)
+
+
+# ---------- finance API ----------
+@app.get("/api/finance/settings")
+def finance_settings_get(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return get_pct_settings(db)
+
+class FinancePctIn(BaseModel):
+    pct_executor: int
+    pct_manager: int
+    pct_company: int
+
+@app.post("/api/finance/settings")
+def finance_settings_set(data: FinancePctIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    set_pct_settings(db, data.pct_executor, data.pct_manager, data.pct_company)
+    return {"ok": True, **get_pct_settings(db)}
+
+@app.get("/api/finance/cabinet")
+def finance_cabinet(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Кабинет CRM-менеджера / исполнителя / сводка."""
+    ensure_month_rollover(db)
+    mk = _month_key()
+    if user.role == "order_manager":
+        my_orders = db.query(Order).filter(Order.created_by == user.id).all()
+        active = [o for o in my_orders if o.status not in ("cancelled",)]
+        done = [o for o in my_orders if o.status == "done"]
+        awaiting = user_awaiting_balance(db, user.id)
+        # earned this month = paid commissions this month
+        earned = sum(r.amount for r in db.query(CommissionEntry).filter(
+            CommissionEntry.user_id == user.id,
+            CommissionEntry.party == "manager",
+            CommissionEntry.status == "paid",
+            CommissionEntry.month_key == mk,
+        ).all())
+        recent = sorted(my_orders, key=lambda o: o.created_at or datetime.min, reverse=True)[:20]
+        return {
+            "role": "order_manager",
+            "full_name": user.full_name,
+            "brought": len(active),
+            "done": len(done),
+            "earned": earned,
+            "awaiting_payout": awaiting,
+            "open_fines": user_open_fines(db, user.id),
+            "orders": [{
+                "id": o.id, "address": o.address, "status": o.status,
+                "status_label": ORDER_LABELS.get(o.status, o.status),
+                "payment_amount": o.payment_amount,
+            } for o in recent if o.status != "cancelled"],
+        }
+    if user.role in ("cleaner", "handyman"):
+        my_orders = db.query(Order).filter(Order.executor_id == user.id).all()
+        done = [o for o in my_orders if o.status == "done"]
+        active = [o for o in my_orders if o.status not in ("done", "cancelled")]
+        awaiting = user_awaiting_balance(db, user.id)
+        earned = sum(r.amount for r in db.query(CommissionEntry).filter(
+            CommissionEntry.user_id == user.id,
+            CommissionEntry.party == "executor",
+            CommissionEntry.status == "paid",
+            CommissionEntry.month_key == mk,
+        ).all())
+        recent = sorted(my_orders, key=lambda o: o.created_at or datetime.min, reverse=True)[:20]
+        return {
+            "role": user.role,
+            "full_name": user.full_name,
+            "active": len(active),
+            "done": len(done),
+            "earned": earned,
+            "awaiting_payout": awaiting,
+            "open_fines": user_open_fines(db, user.id),
+            "orders": [{
+                "id": o.id, "address": o.address, "status": o.status,
+                "status_label": ORDER_LABELS.get(o.status, o.status),
+                "payment_amount": o.payment_amount,
+            } for o in recent if o.status != "cancelled"],
+        }
+    # admin summary
+    ensure_month_rollover(db)
+    company_now = sum(r.amount for r in db.query(CommissionEntry).filter(
+        CommissionEntry.party == "company",
+        CommissionEntry.status == "awaiting",
+        CommissionEntry.month_key == mk,
+    ).all())
+    return {
+        "role": "admin",
+        "company_month": mk,
+        "company_earned": company_now,
+        "pct": get_pct_settings(db),
+    }
+
+@app.get("/api/finance/payouts")
+def finance_payouts_list(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Сотрудники с балансом > 0 к выплате."""
+    users = db.query(User).filter(User.role.in_(["order_manager", "cleaner", "handyman"])).all()
+    out = []
+    for u in users:
+        bal = user_awaiting_balance(db, u.id)
+        if bal <= 0:
+            continue
+        gross = user_awaiting_gross(db, u.id)
+        fines = user_open_fines(db, u.id)
+        out.append({
+            "user_id": u.id, "full_name": u.full_name, "role": u.role,
+            "role_label": ROLE_LABELS.get(u.role, u.role),
+            "gross": gross, "fines": fines, "to_pay": bal,
+        })
+    out.sort(key=lambda x: -x["to_pay"])
+    return out
+
+@app.post("/api/finance/payouts/{user_id}")
+def finance_payout_one(user_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    uid = normalize(user_id).lower()
+    mk = _month_key()
+    rows = db.query(CommissionEntry).filter(
+        CommissionEntry.user_id == uid,
+        CommissionEntry.status == "awaiting",
+        CommissionEntry.party.in_(["manager", "executor"]),
+    ).all()
+    if not rows:
+        raise HTTPException(400, "Нечего выплачивать")
+    gross = sum(r.amount for r in rows)
+    fines = db.query(Fine).filter(Fine.user_id == uid, Fine.status == "open").all()
+    fine_sum = sum(f.amount for f in fines)
+    # mark commissions paid
+    for r in rows:
+        r.status = "paid"
+        r.paid_at = now_app()
+        r.paid_by = user.id
+        r.month_key = mk
+    for f in fines:
+        f.status = "applied"
+        f.applied_at = now_app()
+    db.commit()
+    return {
+        "ok": True,
+        "message": f"Выплачено {max(0, gross - fine_sum)} ₽ (начислено {gross}, штрафы {fine_sum})",
+        "paid": max(0, gross - fine_sum),
+        "gross": gross,
+        "fines": fine_sum,
+    }
+
+@app.get("/api/finance/crm-report")
+def finance_crm_report(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    ensure_month_rollover(db)
+    mk = _month_key()
+    managers = db.query(User).filter(User.role == "order_manager").all()
+    rating = []
+    total_orders = 0
+    total_done = 0
+    total_comm = 0
+    for m in managers:
+        orders = db.query(Order).filter(Order.created_by == m.id, Order.status != "cancelled").all()
+        done = [o for o in orders if o.status == "done"]
+        # commission paid+awaiting for month-ish all time active
+        comm = sum(r.amount for r in db.query(CommissionEntry).filter(
+            CommissionEntry.user_id == m.id,
+            CommissionEntry.party == "manager",
+            CommissionEntry.status.in_(["awaiting", "paid"]),
+        ).all())
+        rating.append({
+            "user_id": m.id, "full_name": m.full_name,
+            "orders": len(orders), "done": len(done), "commission": comm,
+        })
+        total_orders += len(orders)
+        total_done += len(done)
+        total_comm += comm
+    rating.sort(key=lambda x: -x["orders"])
+    company = sum(r.amount for r in db.query(CommissionEntry).filter(
+        CommissionEntry.party == "company",
+        CommissionEntry.status == "awaiting",
+        CommissionEntry.month_key == mk,
+    ).all())
+    history = [{
+        "month_key": c.month_key, "amount": c.amount, "orders_count": c.orders_count,
+    } for c in db.query(CompanyMonth).order_by(CompanyMonth.month_key.desc()).limit(24).all()]
+    return {
+        "month_key": mk,
+        "managers_count": len(managers),
+        "total_orders": total_orders,
+        "total_done": total_done,
+        "total_manager_commission": total_comm,
+        "company_earned_month": company,
+        "rating": rating,
+        "company_history": history,
+        "pct": get_pct_settings(db),
+    }
+
+class FineIn(BaseModel):
+    user_id: str
+    amount: int
+    reason: str
+
+@app.post("/api/finance/fines")
+def finance_fine_create(data: FineIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    if not data.amount or data.amount <= 0:
+        raise HTTPException(400, "Сумма штрафа")
+    if not (data.reason or "").strip():
+        raise HTTPException(400, "Укажите основание")
+    uid = normalize(data.user_id).lower()
+    u = db.query(User).filter(User.id == uid).first()
+    if not u:
+        raise HTTPException(404, "Сотрудник не найден")
+    f = Fine(user_id=uid, amount=int(data.amount), reason=data.reason.strip(), created_by=user.id)
+    db.add(f)
+    db.commit()
+    return {"ok": True, "id": f.id, "message": f"Штраф {f.amount} ₽"}
+
+@app.get("/api/finance/fines/my")
+def finance_fines_my(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = db.query(Fine).filter(Fine.user_id == user.id).order_by(Fine.created_at.desc()).limit(50).all()
+    return [{
+        "id": f.id, "amount": f.amount, "reason": f.reason,
+        "status": f.status, "created_at": f.created_at.isoformat() if f.created_at else None,
+        # кто назначил — не отдаём
+    } for f in rows]
+
+@app.get("/api/finance/export.csv")
+def finance_export_csv(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    import csv, io
+    from fastapi.responses import StreamingResponse
+    ensure_month_rollover(db)
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["type", "order_id", "user_id", "party", "amount", "status", "month_key", "created_at"])
+    for r in db.query(CommissionEntry).order_by(CommissionEntry.id.desc()).limit(5000).all():
+        w.writerow([
+            "commission", r.order_id, r.user_id or "", r.party, r.amount, r.status,
+            r.month_key or "", r.created_at.isoformat() if r.created_at else "",
+        ])
+    for f in db.query(Fine).order_by(Fine.id.desc()).limit(2000).all():
+        w.writerow([
+            "fine", "", f.user_id, "fine", f.amount, f.status, "",
+            f.created_at.isoformat() if f.created_at else "",
+        ])
+    buf.seek(0)
+    # BOM for Excel
+    data = ("\ufeff" + buf.getvalue()).encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=domovoy-finance-{_month_key()}.csv"},
+    )
+
+
