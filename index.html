@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#0c1210" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link href="https://fonts.cdnfonts.com/css/blackentina-4f" rel="stylesheet" />
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="styles.css?v=20261102ui" />
 </head>
 <body>
   <div id="screen-login" class="screen active">
@@ -27,9 +27,14 @@
       </div>
       <form id="login-form">
         <label>Учётная запись</label>
-        <input id="login-id" placeholder="us000001" autocomplete="username" />
+        <input id="login-id" name="username" placeholder="us000001"
+          autocomplete="username" autocapitalize="off" autocorrect="off"
+          spellcheck="false" inputmode="text" enterkeyhint="next"
+          style="font-size:16px;-webkit-user-select:text;user-select:text;" />
         <label>Пароль</label>
-        <input id="login-pass" type="password" placeholder="••••••" autocomplete="current-password" />
+        <input id="login-pass" name="password" type="password" placeholder="••••••"
+          autocomplete="current-password" enterkeyhint="go"
+          style="font-size:16px;-webkit-user-select:text;user-select:text;" />
         <button type="submit" class="btn btn-primary btn-block">Войти</button>
       </form>
       <div id="login-err" class="error hidden"></div>
@@ -57,6 +62,6 @@ if ("serviceWorker" in navigator) {
   });
 }
 </script>
-<script src="app.js?v=20261102fix"></script>
+<script src="app.js?v=20261102ui"></script>
 </body>
 </html>

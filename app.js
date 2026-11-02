@@ -1778,57 +1778,81 @@ if (token && user) {
 async function renderCabinet() {
   const d = await api("/finance/cabinet");
   if (d.role === "order_manager") {
+    const pill = (st) => {
+      if (st === "done") return "pill-ok";
+      if (st === "cancelled") return "pill-wait";
+      if (["issued","assembling","awaiting_assembly","ready","completion_pending"].includes(st)) return "pill-work";
+      return "pill-wait";
+    };
     return `
-      <div class="page-h"><h1>Личный кабинет</h1>
-        <p style="color:var(--muted)">Здравствуйте, ${d.full_name}!</p></div>
-      <div class="tsd-grid" style="grid-template-columns:1fr 1fr;gap:0.75rem">
-        <div class="card"><div class="card-title">Приведено заказов</div><div style="font-size:1.75rem;font-weight:800">${d.brought}</div></div>
-        <div class="card"><div class="card-title">Выполнено</div><div style="font-size:1.75rem;font-weight:800">${d.done}</div></div>
-        <div class="card"><div class="card-title">Заработано (месяц)</div><div style="font-size:1.75rem;font-weight:800;color:var(--primary)">${d.earned} ₽</div></div>
-        <div class="card"><div class="card-title">Ожидает выплаты</div><div style="font-size:1.75rem;font-weight:800">${d.awaiting_payout} ₽</div></div>
+      <div class="page-h">
+        <h1>Личный кабинет</h1>
+        <p style="color:var(--muted);margin-top:0.25rem">Здравствуйте, ${d.full_name}! · <span style="color:var(--primary)">Активен</span></p>
       </div>
-      <div class="card" style="margin-top:1rem">
-        <div class="card-title">Мои разделы</div>
-        <button class="btn btn-ghost btn-block" onclick="page='orders';render()">Создать / заказы</button>
-        <button class="btn btn-ghost btn-block" onclick="page='orderHistory';render()">История заказов</button>
-        <button class="btn btn-ghost btn-block" onclick="page='fines';render()">Штрафы за ошибки${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="label">Мои заказы</div><div class="value">${d.brought}</div></div>
+        <div class="stat-card"><div class="label">Выполнено</div><div class="value">${d.done}</div></div>
+        <div class="stat-card"><div class="label">Мой заработок</div><div class="value lime">${(d.earned||0).toLocaleString("ru-RU")} ₽</div></div>
+        <div class="stat-card"><div class="label">Ожидает выплаты</div><div class="value">${(d.awaiting_payout||0).toLocaleString("ru-RU")} ₽</div></div>
       </div>
-      <div class="card" style="margin-top:1rem">
-        <div class="card-title">Последние заказы</div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:0.5rem">Мои разделы</div>
+        <ul class="menu-list">
+          <li><button type="button" onclick="page='orders';render()">＋ Создать заказ</button></li>
+          <li><button type="button" onclick="page='orderHistory';render()">📋 История заказов</button></li>
+          <li><button type="button" onclick="page='fines';render()">⚠ Штрафы за ошибки${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
+          <li><button type="button" onclick="page='profile';render()">👤 Профиль</button></li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title" style="margin-bottom:0.75rem">Последние заказы</div>
         ${d.orders && d.orders.length ? `<div class="table-wrap"><table>
           <thead><tr><th>Заказ</th><th>Сумма</th><th>Статус</th></tr></thead>
           <tbody>${d.orders.map(o => `<tr>
-            <td>${o.id}<br><small>${o.address || ""}</small></td>
-            <td>${o.payment_amount != null ? o.payment_amount + " ₽" : "—"}</td>
-            <td>${o.status_label || o.status}</td>
+            <td><strong>${o.id}</strong><br><small style="color:var(--muted)">${o.address || ""}</small></td>
+            <td>${o.payment_amount != null ? Number(o.payment_amount).toLocaleString("ru-RU") + " ₽" : "—"}</td>
+            <td><span class="pill ${pill(o.status)}">${o.status_label || o.status}</span></td>
           </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Нет заказов</p>"}
       </div>`;
   }
   // executor
+  const pill2 = (st) => {
+    if (st === "done") return "pill-ok";
+    if (st === "issued" || st === "completion_pending") return "pill-work";
+    return "pill-wait";
+  };
   return `
-    <div class="page-h"><h1>Личный кабинет</h1>
-      <p style="color:var(--muted)">Здравствуйте, ${d.full_name}!</p></div>
-    <div class="tsd-grid" style="grid-template-columns:1fr 1fr;gap:0.75rem">
-      <div class="card"><div class="card-title">Активные</div><div style="font-size:1.75rem;font-weight:800">${d.active || 0}</div></div>
-      <div class="card"><div class="card-title">Выполнено</div><div style="font-size:1.75rem;font-weight:800">${d.done || 0}</div></div>
-      <div class="card"><div class="card-title">Заработано (месяц)</div><div style="font-size:1.75rem;font-weight:800;color:var(--primary)">${d.earned || 0} ₽</div></div>
-      <div class="card"><div class="card-title">Ожидает выплаты</div><div style="font-size:1.75rem;font-weight:800">${d.awaiting_payout || 0} ₽</div></div>
+    <div class="page-h">
+      <h1>Личный кабинет</h1>
+      <p style="color:var(--muted);margin-top:0.25rem">Здравствуйте, ${d.full_name}!</p>
     </div>
-    <div class="card" style="margin-top:1rem">
-      <button class="btn btn-ghost btn-block" onclick="page='home';render()">Мои заказы</button>
-      <button class="btn btn-ghost btn-block" onclick="page='fines';render()">Штрафы за ошибки</button>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Активные</div><div class="value">${d.active || 0}</div></div>
+      <div class="stat-card"><div class="label">Выполнено</div><div class="value">${d.done || 0}</div></div>
+      <div class="stat-card"><div class="label">Мой заработок</div><div class="value lime">${(d.earned||0).toLocaleString("ru-RU")} ₽</div></div>
+      <div class="stat-card"><div class="label">Ожидает выплаты</div><div class="value">${(d.awaiting_payout||0).toLocaleString("ru-RU")} ₽</div></div>
     </div>
-    <div class="card" style="margin-top:1rem">
-      <div class="card-title">Последние заказы</div>
+    <div class="card">
+      <div class="card-title" style="margin-bottom:0.5rem">Мои разделы</div>
+      <ul class="menu-list">
+        <li><button type="button" onclick="page='home';render()">📋 Мои заказы</button></li>
+        <li><button type="button" onclick="page='orderHistory';render()">История заказов</button></li>
+        <li><button type="button" onclick="page='fines';render()">⚠ Штрафы за ошибки${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
+        <li><button type="button" onclick="page='profile';render()">👤 Профиль / QR</button></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title" style="margin-bottom:0.75rem">Последние заказы</div>
       ${d.orders && d.orders.length ? `<div class="table-wrap"><table>
         <thead><tr><th>Заказ</th><th>Сумма</th><th>Статус</th></tr></thead>
         <tbody>${d.orders.map(o => `<tr>
-          <td>${o.id}<br><small>${o.address || ""}</small></td>
-          <td>${o.payment_amount != null ? o.payment_amount + " ₽" : "—"}</td>
-          <td>${o.status_label || o.status}</td>
+          <td><strong>${o.id}</strong><br><small style="color:var(--muted)">${o.address || ""}</small></td>
+          <td>${o.payment_amount != null ? Number(o.payment_amount).toLocaleString("ru-RU") + " ₽" : "—"}</td>
+          <td><span class="pill ${pill2(o.status)}">${o.status_label || o.status}</span></td>
         </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Нет заказов</p>"}
     </div>`;
 }
+
 
 async function renderPayouts() {
   const rows = await api("/finance/payouts");
@@ -1872,13 +1896,15 @@ async function renderCrmReport() {
   return `
     <div class="page-h"><h1>Отчёт по CRM</h1>
       <p style="color:var(--muted)">Месяц ${d.month_key} · доли ${d.pct.pct_executor}/${d.pct.pct_manager}/${d.pct.pct_company}</p></div>
-    <div class="tsd-grid" style="grid-template-columns:1fr 1fr;gap:0.75rem">
-      <div class="card"><div class="card-title">Менеджеров</div><div style="font-size:1.5rem;font-weight:800">${d.managers_count}</div></div>
-      <div class="card"><div class="card-title">Всего заявок</div><div style="font-size:1.5rem;font-weight:800">${d.total_orders}</div></div>
-      <div class="card"><div class="card-title">Выполнено</div><div style="font-size:1.5rem;font-weight:800">${d.total_done}</div></div>
-      <div class="card"><div class="card-title">Комиссии менеджерам</div><div style="font-size:1.5rem;font-weight:800">${d.total_manager_commission} ₽</div></div>
-      <div class="card" style="grid-column:1/-1"><div class="card-title">Домовой заработано (месяц)</div>
-        <div style="font-size:1.75rem;font-weight:800;color:var(--primary)">${d.company_earned_month} ₽</div></div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Менеджеров</div><div class="value">${d.managers_count}</div></div>
+      <div class="stat-card"><div class="label">Всего заявок</div><div class="value">${d.total_orders}</div></div>
+      <div class="stat-card"><div class="label">Выполнено заказов</div><div class="value">${d.total_done}</div></div>
+      <div class="stat-card"><div class="label">Комиссии менеджерам</div><div class="value lime">${Number(d.total_manager_commission||0).toLocaleString("ru-RU")} ₽</div></div>
+    </div>
+    <div class="card">
+      <div class="label" style="color:var(--muted);font-size:0.8rem">Домовой · заработано за месяц</div>
+      <div class="value lime" style="font-size:1.85rem;font-weight:800;margin-top:0.25rem">${Number(d.company_earned_month||0).toLocaleString("ru-RU")} ₽</div>
     </div>
     <div class="card" style="margin-top:1rem">
       <div class="card-title">Рейтинг менеджеров</div>
