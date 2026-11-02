@@ -12,7 +12,12 @@ function setWarehouse(code) {
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(API + path, { ...opts, headers });
+  let res;
+  try {
+    res = await fetch(API + path, { ...opts, headers });
+  } catch (netErr) {
+    throw new Error("Нет связи с сервером (Failed to fetch). Проверьте интернет / VPN или подождите — Render мог «уснуть».");
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) { logout(); throw new Error("Сессия истекла"); }
   if (!res.ok) {
@@ -64,14 +69,22 @@ function show(name) {
 
 document.getElementById("login-form").onsubmit = async (e) => {
   e.preventDefault();
+  e.stopPropagation();
   const err = document.getElementById("login-err");
   err.classList.add("hidden");
+  const loginVal = document.getElementById("login-id").value.trim();
+  const passVal = document.getElementById("login-pass").value;
+  if (!loginVal || !passVal) {
+    err.textContent = "Введите учётку и пароль";
+    err.classList.remove("hidden");
+    return;
+  }
   try {
     const data = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({
-        login: document.getElementById("login-id").value.trim(),
-        password: document.getElementById("login-pass").value,
+        login: loginVal,
+        password: passVal,
       }),
     });
     token = data.access_token;
@@ -1006,6 +1019,38 @@ async function renderEmployees() {
           </td>
         </tr>`).join("")}
       </tbody></table></div>
+    
+    ${window._empEditId ? `
+    <div class="card" style="border-color:var(--primary);margin-bottom:1rem">
+      <div class="card-title">Изменить ${window._empEditId}</div>
+      <label>ФИО</label>
+      <input id="edit-name" type="text" value="${(window._empEditName||"").replace(/"/g,"&quot;")}" autocomplete="off" />
+      <label>Новый пароль (оставьте пустым, если не менять)</label>
+      <input id="edit-pass" type="password" placeholder="минимум 4 символа" autocomplete="new-password" />
+      <label>Роль</label>
+      <select id="edit-role">
+        <option value="">— не менять —</option>
+        <option value="supervisor">Старший смены</option>
+        <option value="order_manager">CRM-менеджер</option>
+        <option value="cleaner">Клинер</option>
+        <option value="handyman">Мастер на все руки</option>
+        <option value="admin">Админ</option>
+      </select>
+      <div style="display:flex;gap:0.5rem">
+        <button type="button" class="btn btn-ghost btn-block" onclick="empEditCancel()">Отмена</button>
+        <button type="button" class="btn btn-primary btn-block" onclick="empEditSave('${window._empEditId}')">Сохранить</button>
+      </div>
+    </div>` : ""}
+    ${window._empBlockId ? `
+    <div class="card" style="border-color:var(--danger);margin-bottom:1rem">
+      <div class="card-title">Блокировка ${window._empBlockId}</div>
+      <label>Причина (только для админа)</label>
+      <input id="block-reason" type="text" placeholder="причина" autocomplete="off" />
+      <div style="display:flex;gap:0.5rem">
+        <button type="button" class="btn btn-ghost btn-block" onclick="empBlockCancel()">Отмена</button>
+        <button type="button" class="btn btn-danger btn-block" onclick="empBlockSave('${window._empBlockId}')">Заблокировать</button>
+      </div>
+    </div>` : ""}
     <div id="emp-hist-box"></div>`;
 }
 window.empSave = async () => {
@@ -1021,24 +1066,42 @@ window.empSave = async () => {
     render();
   } catch (e) { toast(e.message, true); }
 };
-window.empEdit = async (id, name) => {
-  const nn = prompt("ФИО:", name);
-  if (nn === null) return;
-  const pwd = prompt("Новый пароль (пусто = не менять):");
-  const role = prompt("Роль (supervisor/order_manager(CRM)/cleaner/handyman/admin, пусто = не менять):");
+
+window._empEditId = null;
+window.empEdit = (id, name) => {
+  window._empEditId = id;
+  window._empEditName = name || "";
+  page = "employees";
+  render();
+};
+window.empEditCancel = () => {
+  window._empEditId = null;
+  render();
+};
+window.empEditSave = async (id) => {
   try {
-    const body = { full_name: nn };
+    const body = { full_name: document.getElementById("edit-name").value.trim() };
+    const pwd = document.getElementById("edit-pass").value;
+    const role = document.getElementById("edit-role").value;
     if (pwd) body.password = pwd;
-    if (role && role.trim()) body.role = role.trim();
+    if (role) body.role = role;
     await api("/employees/" + id, { method: "PATCH", body: JSON.stringify(body) });
-    toast("Сохранено"); render();
+    window._empEditId = null;
+    toast("Сохранено");
+    render();
   } catch (e) { toast(e.message, true); }
 };
-window.empBlock = async (id) => {
-  const reason = prompt("Причина блокировки (видна только админу):");
-  if (reason === null || !reason.trim()) { toast("Нужна причина", true); return; }
+window.empBlock = (id) => {
+  window._empBlockId = id;
+  render();
+};
+window.empBlockCancel = () => { window._empBlockId = null; render(); };
+window.empBlockSave = async (id) => {
+  const reason = (document.getElementById("block-reason")?.value || "").trim();
+  if (!reason) { toast("Нужна причина", true); return; }
   try {
-    toast((await api("/employees/" + id + "/block", { method: "POST", body: JSON.stringify({ reason: reason.trim() }) })).message);
+    toast((await api("/employees/" + id + "/block", { method: "POST", body: JSON.stringify({ reason }) })).message);
+    window._empBlockId = null;
     render();
   } catch (e) { toast(e.message, true); }
 };
