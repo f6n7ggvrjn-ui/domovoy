@@ -69,6 +69,53 @@ function show(name) {
   if (name === "app") render();
 }
 
+function loginRequest(loginVal, passVal) {
+  const url = (location.origin || "") + "/api/auth/login";
+  const body = JSON.stringify({ login: loginVal, password: passVal });
+  // 1) fetch
+  if (typeof fetch === "function") {
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: body,
+      credentials: "same-origin",
+      cache: "no-store",
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch (_) {}
+        if (!res.ok) {
+          var d = data.detail;
+          var msg = typeof d === "string" ? d : (data.message || ("Ошибка " + res.status));
+          throw new Error(msg);
+        }
+        return data;
+      });
+    });
+  }
+  // 2) XMLHttpRequest (старые WebView / ТСД)
+  return new Promise(function (resolve, reject) {
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", url, true);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Accept", "application/json");
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        var data = {};
+        try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else {
+          var d = data.detail;
+          reject(new Error(typeof d === "string" ? d : (data.message || ("Ошибка " + xhr.status))));
+        }
+      };
+      xhr.onerror = function () { reject(new Error("Нет связи с сервером (XHR). Проверьте https:// и интернет на ТСД.")); };
+      xhr.send(body);
+    } catch (e) { reject(e); }
+  });
+}
+
 document.getElementById("login-form").onsubmit = async (e) => {
   e.preventDefault();
   e.stopPropagation();
@@ -81,25 +128,30 @@ document.getElementById("login-form").onsubmit = async (e) => {
     err.classList.remove("hidden");
     return;
   }
+  // подсказка если открыли по http
+  if (location.protocol === "http:" && location.hostname.indexOf("onrender.com") !== -1) {
+    err.textContent = "Откройте сайт с https:// (замок в адресе). Сейчас: http — так API может не работать.";
+    err.classList.remove("hidden");
+  }
   try {
-    const data = await api("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({
-        login: loginVal,
-        password: passVal,
-      }),
-    });
+    const data = await loginRequest(loginVal, passVal);
     token = data.access_token;
     user = data.user;
     sessionStorage.setItem("dv_token", token);
     sessionStorage.setItem("dv_user", JSON.stringify(user));
-    // refresh full me
-    try { user = await api("/me"); sessionStorage.setItem("dv_user", JSON.stringify(user)); } catch(_) {}
+    try {
+      user = await api("/me");
+      sessionStorage.setItem("dv_user", JSON.stringify(user));
+    } catch (_) {}
     page = "home";
     show("app");
     startSignalPoll();
   } catch (ex) {
-    err.textContent = ex.message;
+    var msg = (ex && ex.message) ? ex.message : "Ошибка входа";
+    if (/Failed to fetch|NetworkError|Network request failed|XHR/i.test(msg)) {
+      msg = "Нет связи с API. 1) Адрес строго https://oy-9wb6.onrender.com  2) Очистите кэш браузера  3) Дата/время на ТСД автоматически";
+    }
+    err.textContent = msg;
     err.classList.remove("hidden");
   }
 };
