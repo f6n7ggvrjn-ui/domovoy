@@ -32,6 +32,8 @@ except ImportError:
     )
     from .seed import seed
 
+EXECUTOR_ROLES = ("executor", "cleaner", "handyman")
+
 Base.metadata.create_all(bind=engine)
 # soft-add columns for existing sqlite
 def _migrate():
@@ -425,8 +427,9 @@ def search_employee(q: str, db: Session = Depends(get_db), user: User = Depends(
 
 @app.post("/api/employees")
 def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    if data.role not in ("cleaner", "handyman", "admin", "supervisor", "warehouse", "order_manager"):
-        raise HTTPException(400, "Роль: supervisor / order_manager / cleaner / handyman / admin")
+    if data.role not in ("executor", "cleaner", "handyman", "admin", "supervisor", "warehouse", "order_manager"):
+        raise HTTPException(400, "Роль: supervisor / order_manager / executor / admin")
+    role_norm = "executor" if data.role in ("cleaner", "handyman", "executor") else data.role
     if data.id and data.id.strip():
         nid = normalize(data.id).lower()
         if not is_user(nid):
@@ -441,7 +444,7 @@ def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User 
     pwd = data.password or "123456"
     u = User(
         id=nid, full_name=data.full_name, birth_date=data.birth_date,
-        role=data.role,
+        role=role_norm,
         status="active", password_hash=hash_password(pwd),
     )
     db.add(u)
@@ -460,9 +463,10 @@ def update_employee(emp_id: str, data: EmployeeUpdateIn, db: Session = Depends(g
     if data.birth_date is not None and data.birth_date != u.birth_date:
         log_user_change(db, u.id, user.id, "birth_date", u.birth_date, data.birth_date)
         u.birth_date = data.birth_date
-    if data.role is not None and data.role in ("warehouse", "cleaner", "handyman", "admin", "supervisor", "order_manager") and data.role != u.role:
-        log_user_change(db, u.id, user.id, "role", u.role, data.role)
-        u.role = data.role
+    if data.role is not None and data.role in ("warehouse", "executor", "cleaner", "handyman", "admin", "supervisor", "order_manager") and data.role != u.role:
+        new_role = "executor" if data.role in ("cleaner", "handyman", "executor") else data.role
+        log_user_change(db, u.id, user.id, "role", u.role, new_role)
+        u.role = new_role
     if data.status is not None and data.status in ("active", "blocked", "fired") and data.status != u.status:
         log_user_change(db, u.id, user.id, "status", u.status, data.status)
         u.status = data.status
@@ -739,7 +743,7 @@ def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends
         raise HTTPException(403, "Сотрудник заблокирован. Передача сумки невозможна")
     if executor.status != "active":
         raise HTTPException(403, "Учётная запись неактивна")
-    if executor.role not in ("cleaner", "handyman"):
+    if executor.role not in ("executor", "cleaner", "handyman"):
         raise HTTPException(400, "Только клинер или мастер")
     bag = db.query(Bag).filter(Bag.id == bag_id).first()
     if not bag:
@@ -1289,7 +1293,7 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
     executor_id = None
     if data.executor_id and user.role in ("admin", "supervisor", "warehouse"):
         ex = db.query(User).filter(User.id == normalize(data.executor_id).lower()).first()
-        if not ex or ex.role not in ("cleaner", "handyman"):
+        if not ex or ex.role not in ("executor", "cleaner", "handyman"):
             raise HTTPException(400, "Исполнитель: клинер или мастер")
         if getattr(ex, "status", None) == "blocked":
             raise HTTPException(400, "Исполнитель заблокирован")
@@ -1373,7 +1377,7 @@ def request_complete(order_id: str, db: Session = Depends(get_db), user: User = 
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
-    if user.role in ("cleaner", "handyman") and order.executor_id != user.id:
+    if user.role in ("executor", "cleaner", "handyman") and order.executor_id != user.id:
         raise HTTPException(403, "Не ваш заказ")
     if order.status != "issued":
         raise HTTPException(400, "Заказ не на исполнении")
@@ -1442,7 +1446,7 @@ def reassign_order(order_id: str, data: ReassignIn, db: Session = Depends(get_db
         raise HTTPException(404, "Не найден")
     eid = normalize(data.executor_id).lower()
     ex = db.query(User).filter(User.id == eid).first()
-    if not ex or ex.role not in ("cleaner", "handyman") or ex.status != "active":
+    if not ex or ex.role not in ("executor", "cleaner", "handyman") or ex.status != "active":
         raise HTTPException(400, "Некорректный исполнитель")
     old = order.executor_id
     order.executor_id = eid
@@ -1465,7 +1469,7 @@ def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user
         db.commit()
 
     q = db.query(Order).order_by(Order.created_at.desc())
-    if user.role in ("cleaner", "handyman"):
+    if user.role in ("executor", "cleaner", "handyman"):
         q = q.filter(Order.executor_id == user.id)
         if scope == "history":
             now = datetime.utcnow()
@@ -2109,12 +2113,12 @@ def shift_executors(warehouse_code: str, db: Session = Depends(get_db), user: Us
     rows = db.query(ShiftEntry).filter(ShiftEntry.warehouse_code == wh, ShiftEntry.shift_date == today).all()
     result = []
     for r in rows:
-        u = db.query(User).filter(User.id == r.user_id, User.role.in_(["cleaner", "handyman"]), User.status == "active").first()
+        u = db.query(User).filter(User.id == r.user_id, User.role.in_(list(EXECUTOR_ROLES) if "EXECUTOR_ROLES" in dir() else ["executor", "cleaner", "handyman"]), User.status == "active").first()
         if u:
             result.append({"id": u.id, "full_name": u.full_name, "role": u.role, "role_label": ROLE_LABELS.get(u.role, u.role)})
     # если смена пустая — fallback все клинеры (чтобы не блокировать)
     if not result:
-        for u in db.query(User).filter(User.role.in_(["cleaner", "handyman"]), User.status == "active").all():
+        for u in db.query(User).filter(User.role.in_(list(EXECUTOR_ROLES) if "EXECUTOR_ROLES" in dir() else ["executor", "cleaner", "handyman"]), User.status == "active").all():
             result.append({"id": u.id, "full_name": u.full_name, "role": u.role, "role_label": ROLE_LABELS.get(u.role, u.role)})
     return result
 
@@ -2783,7 +2787,7 @@ def finance_cabinet(db: Session = Depends(get_db), user: User = Depends(get_curr
                 "payment_amount": o.payment_amount,
             } for o in recent if o.status != "cancelled"],
         }
-    if user.role in ("cleaner", "handyman"):
+    if user.role in ("executor", "cleaner", "handyman"):
         my_orders = db.query(Order).filter(Order.executor_id == user.id).all()
         done = [o for o in my_orders if o.status == "done"]
         active = [o for o in my_orders if o.status not in ("done", "cancelled")]
@@ -2829,7 +2833,7 @@ def finance_payouts_list(db: Session = Depends(get_db), user: User = Depends(req
     ensure_month_rollover(db)
     mk = _month_key()
     users = db.query(User).filter(
-        User.role.in_(["order_manager", "cleaner", "handyman", "supervisor"]),
+        User.role.in_(["order_manager", "executor", "cleaner", "handyman", "supervisor"]),
         User.status != "fired",
     ).all()
     out = []

@@ -18,7 +18,7 @@ function isTsdMode() {
     var isAndroid = /Android/i.test(ua);
     var role = (user && user.role) || "";
     // складские роли на Android = ТСД: без экранной клавиатуры
-    if (isAndroid && (role === "supervisor" || role === "warehouse" || role === "handyman")) return true;
+    if (isAndroid && (role === "supervisor" || role === "warehouse" || role === "handyman" || role === "executor" || role === "cleaner")) return true;
     if (isAndroid && /iData|TSD|Scanner|WebView/i.test(ua)) return true;
     // ручной флаг
     if (sessionStorage.getItem("dv_tsd") === "1") return true;
@@ -968,7 +968,7 @@ async function renderOrdersAdmin() {
   let emps = [];
   if (canAssign) {
     try { emps = await api("/shift/executors?warehouse_code=" + encodeURIComponent(warehouseCode)); } catch(_) {
-      try { emps = (await api("/employees")).filter(e => e.role === "cleaner" || e.role === "handyman"); } catch(__) { emps = []; }
+      try { emps = (await api("/employees")).filter(e => e.role === "executor" || e.role === "cleaner" || e.role === "handyman" || role === "executor" || role === "cleaner"); } catch(__) { emps = []; }
     }
   }
   return `
@@ -1077,8 +1077,7 @@ async function renderEmployees() {
           <option value="">— не менять —</option>
           <option value="supervisor">Старший смены</option>
           <option value="order_manager">CRM-менеджер</option>
-          <option value="cleaner">Клинер</option>
-          <option value="handyman">Мастер на все руки</option>
+          <option value="executor">Исполнитель</option>
           <option value="admin">Админ</option>
         </select>
         <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
@@ -1111,12 +1110,10 @@ async function renderEmployees() {
       <input id="emp-id" value="${next.id}" placeholder="us000107" />
       <p style="font-size:0.8rem;color:var(--muted);margin:0.25rem 0 0.5rem">Подставлен свободный номер — можно заменить своим</p>
       <label>ФИО</label><input id="emp-name" />
-      <label>Дата рождения</label><input id="emp-bd" type="date" />
       <label>Пароль для входа</label><input id="emp-pass" type="text" placeholder="минимум 4 символа" />
       <label>Роль</label>
       <select id="emp-role">
-        <option value="cleaner">Клинер</option>
-        <option value="handyman">Мастер на все руки</option>
+        <option value="executor">Исполнитель</option>
         <option value="supervisor">Старший смены</option>
         <option value="order_manager">CRM-менеджер</option>
         <option value="admin">Админ</option>
@@ -1149,7 +1146,7 @@ window.empSave = async () => {
     const r = await api("/employees", { method: "POST", body: JSON.stringify({
       id: document.getElementById("emp-id").value.trim() || null,
       full_name: document.getElementById("emp-name").value.trim(),
-      birth_date: document.getElementById("emp-bd").value || null,
+      birth_date: null,
       role: document.getElementById("emp-role").value,
       password: document.getElementById("emp-pass").value.trim() || null,
     })});
@@ -1237,7 +1234,6 @@ window.empSearch = async () => {
               <span style="color:var(--muted)"> · ${u.role_label || u.role} · ${u.status}</span>
             </div>
             ${u.block_reason ? `<div style="color:var(--danger);font-size:0.85rem;margin-top:0.25rem">Блок: ${u.block_reason}</div>` : ""}
-            ${u.birth_date ? `<div style="color:var(--muted);font-size:0.85rem">ДР: ${u.birth_date}</div>` : ""}
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:0.35rem">
             <button class="btn btn-ghost btn-sm" onclick="empEdit('${u.id}','${nameSafe}')">Изменить</button>
