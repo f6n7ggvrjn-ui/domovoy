@@ -278,7 +278,7 @@ async function renderPage() {
   }
 }
 function afterRender() {
-  if (document.getElementById('tg-status')) loadTgStatus();
+  if (document.getElementById('tg-status') && typeof window.loadTgStatus === 'function') window.loadTgStatus();
   setTimeout(function(){ suppressSoftKeyboard(document.getElementById('content') || document); }, 20);
 
   if (document.getElementById("pct-ex")) {
@@ -2176,4 +2176,26 @@ window.restoreBackup = async () => {
     toast(data.message || "Восстановлено");
     inp.value = "";
   } catch (e) { toast(e.message || String(e), true); }
+};
+
+
+window.sendBackupTg = async () => {
+  try {
+    const r = await api("/admin/backup-telegram", { method: "POST" });
+    toast(r.message || "Отправлено в Telegram");
+    if (typeof window.loadTgStatus === "function") window.loadTgStatus();
+  } catch (e) { toast(e.message || String(e), true); }
+};
+
+window.loadTgStatus = async () => {
+  const el = document.getElementById("tg-status");
+  if (!el) return;
+  try {
+    const s = await api("/admin/telegram-status");
+    el.textContent = s.chat_id
+      ? ("Telegram: ок · последний " + (s.last_backup_day || "—"))
+      : ("Напишите /start боту " + (s.bot || "@Domovoi_rezerv_kopi_bot"));
+  } catch (e) {
+    el.textContent = "";
+  }
 };
