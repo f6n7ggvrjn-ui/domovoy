@@ -264,3 +264,9 @@ input, textarea, select {
   appearance: none;
 }
 #toast { pointer-events: none; }
+
+/* ТСД: поля под сканер без экранной клавиатуры */
+input[inputmode="none"] {
+  font-size: 18px !important;
+  caret-color: var(--primary);
+}
