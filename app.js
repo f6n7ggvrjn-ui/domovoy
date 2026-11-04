@@ -177,12 +177,12 @@ function navItems() {
   if (user.role === "order_manager") {
     return [
       ["cabinet", "Кабинет"], ["orders", "Заказы"], ["orderHistory", "История"],
-      ["fines", "Штрафы за ошибки"], ["profile", "Профиль"],
+      ["fines", "Штрафы"], ["profile", "Профиль"],
     ];
   }
   return [
     ["cabinet", "Кабинет"], ["home", "Мои заказы"], ["orderHistory", "История"],
-    ["fines", "Штрафы за ошибки"], ["profile", "Профиль"],
+    ["fines", "Штрафы"], ["profile", "Профиль"],
   ];
 }
 
@@ -1788,18 +1788,15 @@ async function renderSettings() {
       <button class="btn btn-primary btn-block" onclick="financeSavePct()">Сохранить доли</button>
     </div>
     <div class="card">
-      <div class="card-title">Штраф сотруднику</div>
-      <label>Учётка (us…)</label><input id="fine-user" placeholder="us000003" />
+      <div class="card-title">Штраф</div>
+      <label>Учётка</label><input id="fine-user" placeholder="us000003" />
       <label>Сумма ₽</label><input id="fine-amount" type="number" min="1" />
-      <label>За что</label><input id="fine-reason" placeholder="основание" />
-      <button class="btn btn-danger btn-block" onclick="fineCreate()">Назначить штраф</button>
+      <label>За что</label><input id="fine-reason" />
+      <button type="button" class="btn btn-danger btn-block" onclick="fineCreate()">Назначить</button>
     </div>
     <div class="card">
       <div class="card-title">Резервная копия</div>
-      <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">
-        Скачайте JSON со всеми данными. Храните у себя (на Free Render база может обнулиться).
-      </p>
-      <button class="btn btn-primary btn-block" onclick="downloadBackup()">Скачать бэкап</button>
+      <button type="button" class="btn btn-primary btn-block" onclick="downloadBackup()">Скачать бэкап</button>
     </div>`;
 }
 window.downloadBackup = async () => {
@@ -1926,10 +1923,10 @@ async function renderCabinet() {
       <div class="card">
         <div class="card-title" style="margin-bottom:0.5rem">Мои разделы</div>
         <ul class="menu-list">
-          <li><button type="button" onclick="page='orders';render()">＋ Создать заказ</button></li>
-          <li><button type="button" onclick="page='orderHistory';render()">📋 История заказов</button></li>
-          <li><button type="button" onclick="page='fines';render()">⚠ Штрафы за ошибки${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
-          <li><button type="button" onclick="page='profile';render()">👤 Профиль</button></li>
+          <li><button type="button" onclick="page='orders';render()">Создать заказ</button></li>
+          <li><button type="button" onclick="page='orderHistory';render()">История заказов</button></li>
+          <li><button type="button" onclick="page='fines';render()">Штрафы${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
+          <li><button type="button" onclick="page='profile';render()">Профиль</button></li>
         </ul>
       </div>
       <div class="card">
@@ -1963,10 +1960,10 @@ async function renderCabinet() {
     <div class="card">
       <div class="card-title" style="margin-bottom:0.5rem">Мои разделы</div>
       <ul class="menu-list">
-        <li><button type="button" onclick="page='home';render()">📋 Мои заказы</button></li>
+        <li><button type="button" onclick="page='home';render()">Мои заказы</button></li>
         <li><button type="button" onclick="page='orderHistory';render()">История заказов</button></li>
-        <li><button type="button" onclick="page='fines';render()">⚠ Штрафы за ошибки${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
-        <li><button type="button" onclick="page='profile';render()">👤 Профиль / QR</button></li>
+        <li><button type="button" onclick="page='fines';render()">Штрафы${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
+        <li><button type="button" onclick="page='profile';render()">Профиль</button></li>
       </ul>
     </div>
     <div class="card">
@@ -1983,25 +1980,55 @@ async function renderCabinet() {
 
 
 async function renderPayouts() {
-  const rows = await api("/finance/payouts");
+  const [rows, fines] = await Promise.all([
+    api("/finance/payouts"),
+    api("/finance/fines").catch(() => []),
+  ]);
+  const openFines = (fines || []).filter(f => f.status === "open");
+  const fmt = (n) => Number(n || 0).toLocaleString("ru-RU") + " ₽";
   return `
-    <div class="page-h"><h1>Выплаты</h1>
-      <p style="color:var(--muted);font-size:0.85rem">Сотрудники с балансом к выплате (начисления − штрафы)</p></div>
-    ${rows.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Сотрудник</th><th>Начислено</th><th>Штрафы</th><th>К выплате</th><th></th></tr></thead>
-      <tbody>${rows.map(r => `<tr>
-        <td>${r.full_name}<br><small>${r.role_label} · ${r.user_id}</small></td>
-        <td>${r.gross} ₽</td>
-        <td>${r.fines} ₽</td>
-        <td style="font-weight:700">${r.to_pay} ₽</td>
-        <td><button class="btn btn-primary btn-sm" onclick="doPayout('${r.user_id}')">Выплачено</button></td>
-      </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Некого выплачивать</p>"}
-    <div class="card" style="margin-top:1rem">
-      <button class="btn btn-ghost btn-block" onclick="downloadFinanceCsv()">Скачать Excel/CSV</button>
-    </div>`;
+    <div class="page-h"><h1>Выплаты</h1></div>
+    ${rows.length ? rows.map(r => `
+      <div class="card">
+        <div style="font-weight:800;font-size:1.05rem;margin-bottom:0.75rem">${r.full_name || r.user_id}</div>
+        <div class="table-wrap"><table>
+          <thead><tr>
+            <th>Заработано</th>
+            <th>Штраф</th>
+            <th>Выплачено</th>
+          </tr></thead>
+          <tbody><tr>
+            <td>${fmt(r.earned != null ? r.earned : r.gross)}</td>
+            <td>${fmt(r.fines)}</td>
+            <td>${fmt(r.paid)}</td>
+          </tr></tbody>
+        </table></div>
+        ${(r.to_pay || 0) > 0 ? `<button type="button" class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="doPayout('${r.user_id}')">Выплатить ${fmt(r.to_pay)}</button>` : ""}
+      </div>
+    `).join("") : `<div class="card"><p style="color:var(--muted);margin:0">Нет данных</p></div>`}
+
+    <div class="card">
+      <div class="card-title">Штрафы</div>
+      ${openFines.length ? openFines.map(f => `
+        <div style="padding:0.75rem 0;border-bottom:1px solid var(--border)">
+          <div style="font-weight:700">${f.full_name || f.user_id}</div>
+          <div style="margin-top:0.25rem">${Number(f.amount).toLocaleString("ru-RU")} ₽ · ${f.reason || "—"}</div>
+          <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="cancelFine(${f.id})">Отменить штраф</button>
+        </div>
+      `).join("") : `<p style="color:var(--muted);margin:0.5rem 0 0">Нет активных штрафов</p>`}
+    </div>
+
+    <button type="button" class="btn btn-ghost btn-block" onclick="downloadFinanceCsv()">Скачать CSV</button>`;
 }
+window.cancelFine = async (id) => {
+  if (!confirm("Отменить этот штраф?")) return;
+  try {
+    toast((await api("/finance/fines/" + id + "/cancel", { method: "POST" })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
 window.doPayout = async (uid) => {
-  if (!confirm("Отметить выплату для " + uid + "?")) return;
+  if (!confirm("Подтвердить выплату?")) return;
   try { toast((await api("/finance/payouts/" + uid, { method: "POST" })).message); render(); }
   catch (e) { toast(e.message, true); }
 };
@@ -2054,16 +2081,16 @@ async function renderCrmReport() {
 
 async function renderMyFines() {
   const rows = await api("/finance/fines/my");
+  const st = (s) => s === "open" ? "Активен" : s === "cancelled" ? "Отменён" : "Учтён";
   return `
-    <div class="page-h"><h1>Штрафы за ошибки</h1>
-      <p style="color:var(--muted);font-size:0.85rem">Сумма и основание. Кто назначил — не отображается.</p></div>
+    <div class="page-h"><h1>Штрафы</h1></div>
     ${rows.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Сумма</th><th>За что</th><th>Статус</th></tr></thead>
       <tbody>${rows.map(f => `<tr>
-        <td style="font-weight:700">${f.amount} ₽</td>
-        <td>${f.reason}</td>
-        <td>${f.status === "open" ? "Удержится при выплате" : "Учтён"}</td>
-      </tr>`).join("")}</tbody></table></div>` : "<p style='color:var(--muted)'>Штрафов нет</p>"}`;
+        <td style="font-weight:700">${Number(f.amount).toLocaleString("ru-RU")} ₽</td>
+        <td>${f.reason || "—"}</td>
+        <td>${st(f.status)}</td>
+      </tr>`).join("")}</tbody></table></div>` : `<div class="card"><p style="color:var(--muted);margin:0">Штрафов нет</p></div>`}`;
 }
 
 
