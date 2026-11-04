@@ -12,35 +12,6 @@ function setWarehouse(code) {
 
 
 
-function isTsdMode() {
-  try {
-    var ua = navigator.userAgent || "";
-    var isAndroid = /Android/i.test(ua);
-    var role = (user && user.role) || "";
-    // складские роли на Android = ТСД: без экранной клавиатуры
-    if (isAndroid && (role === "supervisor" || role === "warehouse" || role === "handyman" || role === "executor" || role === "cleaner")) return true;
-    if (isAndroid && /iData|TSD|Scanner|WebView/i.test(ua)) return true;
-    // ручной флаг
-    if (sessionStorage.getItem("dv_tsd") === "1") return true;
-    return false;
-  } catch (_) { return false; }
-}
-
-/** Не открывать экранную клавиатуру; сканер (как клавиатура) продолжает ввод */
-function suppressSoftKeyboard(root) {
-  if (!isTsdMode()) return;
-  var scope = root || document;
-  scope.querySelectorAll("input, textarea").forEach(function (el) {
-    if (el.type === "password" || el.type === "number" || el.type === "date") return;
-    if (el.id === "login-id" || el.id === "login-pass") return;
-    el.setAttribute("inputmode", "none");
-    el.setAttribute("autocomplete", "off");
-    el.setAttribute("autocorrect", "off");
-    el.setAttribute("spellcheck", "false");
-    // readonly до фокуса — на части Android не даёт IME; снимаем сразу, inputmode=none достаточно
-  });
-}
-
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -279,7 +250,7 @@ async function renderPage() {
 }
 function afterRender() {
   if (document.getElementById('tg-status') && typeof window.loadTgStatus === 'function') window.loadTgStatus();
-  setTimeout(function(){ suppressSoftKeyboard(document.getElementById('content') || document); }, 20);
+
 
   if (document.getElementById("pct-ex")) {
     api("/finance/settings").then(s => {
@@ -512,7 +483,7 @@ window.asmPickOrder = (orderId) => {
     <div class="scan-info"><b>Заказ ${orderId}</b><br>Отсканируйте сумку</div>
     <div class="scan-box">
       <div>Код сумки (sumkaXXXXX)</div>
-      <input id="scan-bag" placeholder="sumka14024" onkeydown="if(event.key==='Enter')asmStart()" / inputmode="none" autocomplete="off">
+      <input id="scan-bag" placeholder="sumka14024" onkeydown="if(event.key==='Enter')asmStart()" />
       <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="asmStart()">Далее</button>
     </div>`;
   document.getElementById("scan-bag").focus();
@@ -541,13 +512,13 @@ window.asmStart = async () => {
       </div>
       <div class="scan-box">
         <div>Оборудование (dd + 8 цифр)</div>
-        <input id="scan-eq" placeholder="dd10000001" onkeydown="if(event.key==='Enter')asmAdd()" / inputmode="none" autocomplete="off">
+        <input id="scan-eq" placeholder="dd10000001" onkeydown="if(event.key==='Enter')asmAdd()" />
         <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="asmAdd()">Добавить</button>
       </div>
       <ul class="item-list" id="asm-items"></ul>
       <div class="scan-box">
         <div>Точка передачи (TP01…)</div>
-        <input id="scan-tp" placeholder="TP01" list="tp-list" / inputmode="none" autocomplete="off">
+        <input id="scan-tp" placeholder="TP01" list="tp-list" />
         <datalist id="tp-list"></datalist>
         <button class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="asmFinish()">Завершить сборку</button>
       </div>`;
