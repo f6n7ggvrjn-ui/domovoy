@@ -2416,7 +2416,7 @@ def admin_backup(db: Session = Depends(get_db), user: User = Depends(require_rol
         "exported_at": datetime.utcnow().isoformat() + "Z",
         "app": "Домовой",
         "db_path": str(DB_PATH),
-        "users": rows(User, ["id", "full_name", "role", "status", "block_reason", "home_warehouse", "birth_date"]),
+        "users": rows(User, ["id", "full_name", "role", "status", "block_reason", "home_warehouse", "birth_date", "password_hash"]),
         "warehouses": rows(Warehouse, ["code", "name", "is_main"]),
         "equipment_types": rows(EquipmentType, ["ean", "name", "category"]),
         "equipment": rows(Equipment, ["id", "ean", "name", "status", "cell_code", "bag_id", "warehouse_code", "shipment_id", "last_user_1", "last_user_2"]),
@@ -2437,9 +2437,278 @@ def admin_backup(db: Session = Depends(get_db), user: User = Depends(require_rol
     )
 
 
+
+
+# ---------- Telegram backup ----------
+TG_TOKEN_DEFAULT = "9056193547:AAGvmOuuR5QuC3UN-ZEEccJI_AsbVBV2v7o"
+
+def _tg_setting(db: Session, key: str, default: str = "") -> str:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if row and row.value:
+        return row.value
+    return default
+
+def _tg_set(db: Session, key: str, value: str):
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key=key, value=value))
+    db.commit()
+
+def _tg_token(db: Session = None) -> str:
+    env = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if env:
+        return env
+    if db is not None:
+        return _tg_setting(db, "tg_bot_token", TG_TOKEN_DEFAULT)
+    return TG_TOKEN_DEFAULT
+
+def _build_backup_json(db: Session) -> str:
+    import json as _json
+    try:
+        from database import DB_PATH
+    except ImportError:
+        try:
+            from .database import DB_PATH
+        except Exception:
+            DB_PATH = os.environ.get("DOMOVOY_DB", "/tmp/domovoy_prod.db")
+
+    def rows(model, fields):
+        out = []
+        for r in db.query(model).all():
+            d = {}
+            for f in fields:
+                v = getattr(r, f, None)
+                if hasattr(v, "isoformat"):
+                    v = v.isoformat()
+                d[f] = v
+            out.append(d)
+        return out
+
+    data = {
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "app": "Домовой",
+        "db_path": str(DB_PATH),
+        "users": rows(User, ["id", "full_name", "role", "status", "block_reason", "home_warehouse", "birth_date", "password_hash"]),
+        "warehouses": rows(Warehouse, ["code", "name", "is_main"]),
+        "equipment_types": rows(EquipmentType, ["ean", "name", "category"]),
+        "equipment": rows(Equipment, ["id", "ean", "name", "status", "cell_code", "bag_id", "warehouse_code", "shipment_id", "last_user_1", "last_user_2"]),
+        "cells": rows(Cell, ["code", "warehouse_no", "region", "shelf", "slot", "warehouse_code"]),
+        "bags": rows(Bag, ["id", "status", "order_id", "executor_id", "transfer_point", "warehouse_code"]),
+        "orders": rows(Order, ["id", "client_name", "address", "object_info", "executor_id", "bag_id", "status", "warehouse_code", "is_late", "late_minutes", "cutoff_minutes", "payment_amount", "created_by"]),
+        "shipments": rows(Shipment, ["id", "from_warehouse", "to_warehouse", "status", "kind", "assembler_id", "shortage_json", "season", "season_year"]),
+        "shipment_items": rows(ShipmentItem, ["id", "shipment_id", "equipment_id", "ean", "name", "status", "received_cell"]),
+        "missing_reports": rows(MissingReport, ["id", "equipment_id", "bag_id", "shipment_id", "warehouse_code", "kind", "status", "last_user_1", "last_user_2"]),
+        "transfer_points": rows(TransferPoint, ["code", "name", "warehouse_code"]),
+        "fines": rows(Fine, ["id", "user_id", "amount", "reason", "status", "created_by"]),
+        "commissions": rows(CommissionEntry, ["id", "order_id", "user_id", "party", "amount", "status", "month_key"]),
+    }
+    return _json.dumps(data, ensure_ascii=False, indent=2)
+
+def _tg_discover_chat_id(token: str) -> str:
+    """Берёт chat_id из последних сообщений боту."""
+    import urllib.request
+    try:
+        url = f"https://api.telegram.org/bot{token}/getUpdates"
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            import json as _json
+            data = _json.loads(resp.read().decode())
+        for upd in reversed(data.get("result") or []):
+            msg = upd.get("message") or upd.get("edited_message") or {}
+            chat = msg.get("chat") or {}
+            if chat.get("id") is not None:
+                return str(chat["id"])
+    except Exception:
+        pass
+    return ""
+
+def _tg_send_document(token: str, chat_id: str, filename: str, content: str, caption: str = "") -> dict:
+    import urllib.request
+    boundary = "DomovoyBoundary7MA4YWxkTrZu0gW"
+    body = []
+    def add(name, value):
+        body.append(f"--{boundary}".encode())
+        body.append(f'Content-Disposition: form-data; name="{name}"'.encode())
+        body.append(b"")
+        body.append(str(value).encode("utf-8"))
+    add("chat_id", chat_id)
+    if caption:
+        add("caption", caption)
+    body.append(f"--{boundary}".encode())
+    body.append(f'Content-Disposition: form-data; name="document"; filename="{filename}"'.encode())
+    body.append(b"Content-Type: application/json")
+    body.append(b"")
+    body.append(content.encode("utf-8"))
+    body.append(f"--{boundary}--".encode())
+    body.append(b"")
+    data = b"\r\n".join(body)
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendDocument",
+        data=data,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        import json as _json
+        return _json.loads(resp.read().decode())
+
+def _maybe_auto_backup(db: Session):
+    """Не чаще 1 раза в 24 часа — при любом запросе health/login после полуночи Екб."""
+    try:
+        token = _tg_token(db)
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or _tg_setting(db, "tg_chat_id", "")
+        if not chat_id:
+            chat_id = _tg_discover_chat_id(token)
+            if chat_id:
+                _tg_set(db, "tg_chat_id", chat_id)
+        if not token or not chat_id:
+            return
+        today = _month_key()  # wrong - need day key
+        day_key = now_app().strftime("%Y-%m-%d")
+        last = _tg_setting(db, "tg_last_backup_day", "")
+        if last == day_key:
+            return
+        content = _build_backup_json(db)
+        fname = f"domovoy-backup-{day_key}.json"
+        _tg_send_document(token, chat_id, fname, content, caption=f"Домовой · автобэкап {day_key}")
+        _tg_set(db, "tg_last_backup_day", day_key)
+    except Exception as e:
+        print("auto backup error:", e)
+
+
+
+@app.post("/api/admin/restore")
+async def admin_restore(request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Восстановление из JSON-бэкапа (файл из Telegram / скачанный)."""
+    import json as _json
+    try:
+        body = await request.body()
+        data = _json.loads(body.decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "Не удалось прочитать JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Неверный формат бэкапа")
+
+    counts = {}
+
+    def upsert_list(model, items, pk_field="id", fields=None):
+        if not items:
+            counts[model.__tablename__] = 0
+            return
+        n = 0
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            pk = raw.get(pk_field)
+            if pk is None:
+                continue
+            obj = db.query(model).filter(getattr(model, pk_field) == pk).first()
+            if not obj:
+                obj = model(**{pk_field: pk})
+                db.add(obj)
+            use_fields = fields or [k for k in raw.keys() if k != pk_field and hasattr(model, k)]
+            for f in use_fields:
+                if f not in raw or not hasattr(obj, f):
+                    continue
+                val = raw[f]
+                setattr(obj, f, val)
+            n += 1
+        counts[model.__tablename__] = n
+
+    # порядок: справочники → пользователи → остальное
+    upsert_list(Warehouse, data.get("warehouses") or [], "code", ["name", "is_main"])
+    upsert_list(User, data.get("users") or [], "id",
+                ["full_name", "role", "status", "block_reason", "home_warehouse", "birth_date", "password_hash"])
+    # users without password_hash keep existing hash
+    for raw in (data.get("users") or []):
+        if not raw.get("password_hash"):
+            continue
+        u = db.query(User).filter(User.id == raw.get("id")).first()
+        if u and raw.get("password_hash"):
+            u.password_hash = raw["password_hash"]
+    upsert_list(EquipmentType, data.get("equipment_types") or [], "ean", ["name", "category"])
+    upsert_list(Cell, data.get("cells") or [], "code",
+                ["warehouse_no", "region", "shelf", "slot", "warehouse_code"])
+    upsert_list(TransferPoint, data.get("transfer_points") or [], "code", ["name", "warehouse_code"])
+    upsert_list(Bag, data.get("bags") or [], "id",
+                ["status", "order_id", "executor_id", "transfer_point", "warehouse_code"])
+    upsert_list(Equipment, data.get("equipment") or [], "id",
+                ["ean", "name", "status", "cell_code", "bag_id", "warehouse_code", "shipment_id", "last_user_1", "last_user_2"])
+    upsert_list(Order, data.get("orders") or [], "id",
+                ["client_name", "address", "object_info", "executor_id", "bag_id", "status",
+                 "warehouse_code", "is_late", "late_minutes", "cutoff_minutes", "payment_amount", "created_by"])
+    upsert_list(Shipment, data.get("shipments") or [], "id",
+                ["from_warehouse", "to_warehouse", "status", "kind", "assembler_id", "shortage_json", "season", "season_year"])
+    # shipment items, missing, fines, commissions — by id
+    upsert_list(ShipmentItem, data.get("shipment_items") or [], "id",
+                ["shipment_id", "equipment_id", "ean", "name", "status", "received_cell"])
+    upsert_list(MissingReport, data.get("missing_reports") or [], "id",
+                ["equipment_id", "bag_id", "shipment_id", "warehouse_code", "kind", "status", "last_user_1", "last_user_2"])
+    upsert_list(Fine, data.get("fines") or [], "id",
+                ["user_id", "amount", "reason", "status", "created_by"])
+    upsert_list(CommissionEntry, data.get("commissions") or [], "id",
+                ["order_id", "user_id", "party", "amount", "status", "month_key"])
+
+    try:
+        log_op(db, "restore_backup", user.id, comment=_json.dumps({"counts": counts}, ensure_ascii=False)[:500])
+    except Exception:
+        pass
+    db.commit()
+    return {"ok": True, "message": "Восстановление выполнено", "counts": counts}
+
+
+@app.post("/api/admin/backup-telegram")
+def admin_backup_telegram(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    token = _tg_token(db)
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or _tg_setting(db, "tg_chat_id", "")
+    if not chat_id:
+        chat_id = _tg_discover_chat_id(token)
+        if chat_id:
+            _tg_set(db, "tg_chat_id", chat_id)
+    if not chat_id:
+        raise HTTPException(
+            400,
+            "Нет chat_id. Напишите боту @Domovoi_rezerv_kopi_bot команду /start и нажмите «В Telegram» ещё раз.",
+        )
+    content = _build_backup_json(db)
+    day_key = now_app().strftime("%Y-%m-%d_%H%M")
+    fname = f"domovoy-backup-{day_key}.json"
+    try:
+        res = _tg_send_document(token, str(chat_id), fname, content, caption=f"Домовой · бэкап от {user.id}")
+    except Exception as e:
+        raise HTTPException(500, f"Telegram: {e}")
+    if not res.get("ok"):
+        raise HTTPException(500, str(res))
+    _tg_set(db, "tg_last_backup_day", now_app().strftime("%Y-%m-%d"))
+    return {"ok": True, "message": "Бэкап отправлен в Telegram", "chat_id": str(chat_id)}
+
+@app.get("/api/admin/telegram-status")
+def admin_tg_status(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    token = _tg_token(db)
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or _tg_setting(db, "tg_chat_id", "")
+    discovered = ""
+    if not chat_id:
+        discovered = _tg_discover_chat_id(token)
+        if discovered:
+            chat_id = discovered
+            _tg_set(db, "tg_chat_id", chat_id)
+    return {
+        "bot": "@Domovoi_rezerv_kopi_bot",
+        "has_token": bool(token),
+        "chat_id": chat_id or None,
+        "last_backup_day": _tg_setting(db, "tg_last_backup_day", "") or None,
+        "hint": None if chat_id else "Напишите боту /start в Telegram",
+    }
+
+
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "app": "Домовой", "version": "3.0"}
+def health(db: Session = Depends(get_db)):
+    try:
+        _maybe_auto_backup(db)
+    except Exception:
+        pass
+    return {"status": "ok", "app": "Домовой", "version": "3.1"}
 
 @app.get("/")
 def index():
@@ -2556,21 +2825,38 @@ def finance_cabinet(db: Session = Depends(get_db), user: User = Depends(get_curr
 
 @app.get("/api/finance/payouts")
 def finance_payouts_list(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    """Сотрудники с балансом > 0 к выплате."""
-    users = db.query(User).filter(User.role.in_(["order_manager", "cleaner", "handyman"])).all()
+    """Таблица: имя | заработано | штраф | выплачено."""
+    ensure_month_rollover(db)
+    mk = _month_key()
+    users = db.query(User).filter(
+        User.role.in_(["order_manager", "cleaner", "handyman", "supervisor"]),
+        User.status != "fired",
+    ).all()
     out = []
     for u in users:
-        bal = user_awaiting_balance(db, u.id)
-        if bal <= 0:
-            continue
-        gross = user_awaiting_gross(db, u.id)
+        gross = user_awaiting_gross(db, u.id)  # заработано (ещё не выплачено)
         fines = user_open_fines(db, u.id)
+        paid = sum(r.amount for r in db.query(CommissionEntry).filter(
+            CommissionEntry.user_id == u.id,
+            CommissionEntry.party.in_(["manager", "executor"]),
+            CommissionEntry.status == "paid",
+            CommissionEntry.month_key == mk,
+        ).all())
+        to_pay = user_awaiting_balance(db, u.id)
+        if gross <= 0 and fines <= 0 and paid <= 0:
+            continue
         out.append({
-            "user_id": u.id, "full_name": u.full_name, "role": u.role,
+            "user_id": u.id,
+            "full_name": u.full_name,
+            "role": u.role,
             "role_label": ROLE_LABELS.get(u.role, u.role),
-            "gross": gross, "fines": fines, "to_pay": bal,
+            "earned": gross,       # заработано (ожидает)
+            "fines": fines,        # открытые штрафы
+            "paid": paid,          # уже выплачено в этом месяце
+            "to_pay": to_pay,      # к выплате сейчас
+            "gross": gross,
         })
-    out.sort(key=lambda x: -x["to_pay"])
+    out.sort(key=lambda x: (-x["to_pay"], -x["earned"], x["full_name"] or ""))
     return out
 
 @app.post("/api/finance/payouts/{user_id}")
@@ -2679,6 +2965,40 @@ def finance_fines_my(db: Session = Depends(get_db), user: User = Depends(get_cur
         "status": f.status, "created_at": f.created_at.isoformat() if f.created_at else None,
         # кто назначил — не отдаём
     } for f in rows]
+
+
+@app.get("/api/finance/fines")
+def finance_fines_list(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Все штрафы (для админа), свежие сверху."""
+    rows = db.query(Fine).order_by(Fine.created_at.desc()).limit(100).all()
+    users = {u.id: u for u in db.query(User).all()}
+    status_ru = {"open": "Активен", "applied": "Учтён при выплате", "cancelled": "Отменён"}
+    out = []
+    for f in rows:
+        u = users.get(f.user_id)
+        out.append({
+            "id": f.id,
+            "user_id": f.user_id,
+            "full_name": u.full_name if u else f.user_id,
+            "amount": f.amount,
+            "reason": f.reason,
+            "status": f.status,
+            "status_label": status_ru.get(f.status, f.status),
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+        })
+    return out
+
+@app.post("/api/finance/fines/{fine_id}/cancel")
+def finance_fine_cancel(fine_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    f = db.query(Fine).filter(Fine.id == fine_id).first()
+    if not f:
+        raise HTTPException(404, "Штраф не найден")
+    if f.status != "open":
+        raise HTTPException(400, "Отменить можно только активный штраф")
+    f.status = "cancelled"
+    db.commit()
+    return {"ok": True, "message": f"Штраф {f.amount} ₽ отменён"}
+
 
 @app.get("/api/finance/export.csv")
 def finance_export_csv(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):

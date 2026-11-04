@@ -278,6 +278,7 @@ async function renderPage() {
   }
 }
 function afterRender() {
+  if (document.getElementById('tg-status')) loadTgStatus();
   setTimeout(function(){ suppressSoftKeyboard(document.getElementById('content') || document); }, 20);
 
   if (document.getElementById("pct-ex")) {
@@ -1827,7 +1828,12 @@ async function renderSettings() {
     </div>
     <div class="card">
       <div class="card-title">Резервная копия</div>
-      <button type="button" class="btn btn-primary btn-block" onclick="downloadBackup()">Скачать бэкап</button>
+      <button type="button" class="btn btn-primary btn-block" onclick="downloadBackup()">Скачать файл</button>
+      <button type="button" class="btn btn-accent btn-block" style="margin-top:0.5rem" onclick="sendBackupTg()">В Telegram</button>
+      <label style="margin-top:0.75rem;display:block">Восстановить из файла</label>
+      <input type="file" id="restore-file" accept=".json,application/json" />
+      <button type="button" class="btn btn-danger btn-block" style="margin-top:0.5rem" onclick="restoreBackup()">Восстановить</button>
+      <p id="tg-status" style="color:var(--muted);font-size:0.8rem;margin-top:0.5rem"></p>
     </div>`;
 }
 window.downloadBackup = async () => {
@@ -2145,4 +2151,29 @@ window.fineCreate = async () => {
     })});
     toast(r.message); render();
   } catch (e) { toast(e.message, true); }
+};
+
+window.restoreBackup = async () => {
+  const inp = document.getElementById("restore-file");
+  if (!inp || !inp.files || !inp.files[0]) {
+    toast("Выберите JSON-файл бэкапа", true);
+    return;
+  }
+  if (!confirm("Восстановить данные из файла? Текущие записи с теми же ID будут перезаписаны.")) return;
+  try {
+    const text = await inp.files[0].text();
+    JSON.parse(text); // проверка
+    const res = await fetch("/api/admin/restore", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json",
+      },
+      body: text,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || ("Ошибка " + res.status));
+    toast(data.message || "Восстановлено");
+    inp.value = "";
+  } catch (e) { toast(e.message || String(e), true); }
 };
