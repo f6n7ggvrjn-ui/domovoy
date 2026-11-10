@@ -628,15 +628,31 @@ def assembly_board(db: Session = Depends(get_db), user: User = Depends(require_r
     result.sort(key=lambda x: (x["scheduled_at"] is None, x["scheduled_at"] or "", x["id"]))
     return result
 
+
+def get_or_create_bag(db: Session, bag_id: str, user_id: str = None) -> "Bag":
+    """Сумка появляется только при сканировании валидного кода sumka+5 цифр."""
+    bag_id = normalize(bag_id).lower()
+    if not is_bag(bag_id):
+        raise HTTPException(400, "Неверный код сумки. Формат: sumka + 5 цифр")
+    bag = db.query(Bag).filter(Bag.id == bag_id).first()
+    if not bag:
+        bag = Bag(id=bag_id, status="free")
+        db.add(bag)
+        db.flush()
+        if user_id:
+            try:
+                log_op(db, "bag_create_scan", user_id, bag_id=bag_id, comment="auto on scan")
+            except Exception:
+                pass
+    return bag
+
 # ---------- assembly ----------
 @app.post("/api/assembly/start")
 def assembly_start(data: AssemblyStartIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
     bag_id = normalize(data.bag_id).lower()
     if not is_bag(bag_id):
         raise HTTPException(400, "Неверный код сумки. Формат: sumka + 5 цифр")
-    bag = db.query(Bag).filter(Bag.id == bag_id).first()
-    if not bag:
-        raise HTTPException(404, "Сумка не найдена")
+    bag = get_or_create_bag(db, bag_id, user.id)
     if bag.status == "assembling" and bag.assembled_by and bag.assembled_by != user.id:
         raise HTTPException(400, f"Сумку уже собирает {bag.assembled_by}")
     if bag.status not in ("free", "assembling"):
@@ -808,8 +824,10 @@ def unpack_item(data: UnpackItemIn, db: Session = Depends(get_db), user: User = 
     eq.bag_id = None
     touch_equipment(eq, user.id)
     log_op(db, "unpack_item", user.id, bag_id=bag.id, equipment_id=eq.id, cell_code=cell_code)
+    db.flush()  # важно: иначе последний предмет ещё «виден» в сумке
     remaining = db.query(Equipment).filter(Equipment.bag_id == bag.id).all()
-    if not remaining:
+    bag_empty = len(remaining) == 0
+    if bag_empty:
         bag.status = "free"
         bag.order_id = None
         bag.executor_id = None
@@ -817,11 +835,16 @@ def unpack_item(data: UnpackItemIn, db: Session = Depends(get_db), user: User = 
         bag.assembled_by = None
         bag.assembly_started_at = None
         bag.assembly_finished_at = None
+        try:
+            log_op(db, "bag_free", user.id, bag_id=bag.id, comment="last item unpacked")
+        except Exception:
+            pass
     db.commit()
     return {"ok": True, "remaining": len(remaining),
             "remaining_items": [{"id": e.id, "name": e.name} for e in remaining],
-            "bag_empty": len(remaining) == 0,
-            "message": "Размещено" if remaining else "Сумка разобрана и свободна"}
+            "bag_empty": bag_empty,
+            "bag_status": bag.status,
+            "message": "Сумка разобрана и свободна" if bag_empty else "Размещено"}
 
 @app.post("/api/unpack/damage")
 def unpack_damage(data: DamageIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
@@ -1609,6 +1632,9 @@ def list_bags(db: Session = Depends(get_db), user: User = Depends(require_roles(
 
 @app.post("/api/bags")
 def create_bag(data: BagCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Сумки создаются при сканировании. Ручное добавление отключено."""
+    raise HTTPException(400, "Сумки добавляются только при сканировании (сборка / операции). Ручной ввод отключён.")
+    # unreachable
     bag_id = normalize(data.bag_id).lower()
     if not is_bag(bag_id):
         raise HTTPException(400, "Формат: sumka + 5 цифр")

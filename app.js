@@ -669,15 +669,15 @@ window.unpItem = async () => {
       equipment_id: unp.eqId,
       cell_code: cell,
     })});
-    toast(r.message);
     unp.expected = r.remaining_items || [];
-    if (r.bag_empty) {
-      // всё размещено — сумка свободна, сразу на главную
-      toast("Сумка разобрана и свободна");
+    if (r.bag_empty || r.remaining === 0 || (r.bag_status === "free")) {
+      toast(r.message || "Сумка разобрана и свободна");
+      unp.bagId = null;
       page = "home";
       render();
       return;
     }
+    toast(r.message || "Размещено");
     // снова список + скан dd
     showUnpackUI();
   } catch (e) { toast(e.message, true); }
@@ -886,13 +886,7 @@ async function renderBags() {
     <p style="color:var(--muted);margin-top:0.75rem">Если видите Method Not Allowed — обновите сервер (нужен GET /api/bags).</p>`; }
   return `
     <div class="page-h"><h1>Сумки</h1></div>
-    ${user.role === "admin" ? `
-    <div class="card">
-      <div class="card-title">Добавить сумку</div>
-      <label>Код (sumka + 5 цифр)</label>
-      <input id="new-bag-id" placeholder="sumka14028" />
-      <button class="btn btn-primary btn-block" onclick="bagCreate()">Добавить</button>
-    </div>` : ""}
+    <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">Сумки появляются при сканировании кода sumka + 5 цифр (на сборке).</p>
     <div class="table-wrap" style="margin-top:1rem"><table>
       <thead><tr><th>Сумка</th><th>Статус</th><th>Заказ</th><th>Сборщик</th><th>Исполнитель</th><th></th></tr></thead>
       <tbody>${rows.map(b => `
@@ -917,10 +911,7 @@ window.bagForceFree = async (id) => {
   } catch (e) { toast(e.message, true); }
 };
 window.bagCreate = async () => {
-  try {
-    const r = await api("/bags", { method: "POST", body: JSON.stringify({ bag_id: document.getElementById("new-bag-id").value.trim() }) });
-    toast("Добавлена " + r.id); render();
-  } catch (e) { toast(e.message, true); }
+  toast("Сумки добавляются только при сканировании", true);
 };
 window.bagDelete = async (id) => {
   if (!confirm("Удалить " + id + "?")) return;
