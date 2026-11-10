@@ -164,8 +164,8 @@ function navItems() {
       ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
       ["shift", "Смена"], ["logistics", "Логистика"],
       ["employees", "Сотрудники"], ["warehouses", "Склады"], ["missing", "Пропажи"],
-      ["payouts", "Выплаты"], ["crmReport", "Отчёт CRM"],
-      ["settings", "Настройки"], ["qr", "QR"], ["profile", "Профиль"],
+      ["payouts", "Выплаты"],
+      ["settings", "Настройки"], ["qr", "Печать ШК"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "supervisor" || user.role === "warehouse") {
@@ -232,6 +232,8 @@ async function renderPage() {
     case "cabinet": return renderCabinet();
     case "payouts": return renderPayouts();
     case "crmReport": return renderCrmReport();
+    case "mgrRating": return renderMgrRating();
+    case "exRating": return renderExRating();
     case "fines": return renderMyFines();
     case "profile": return renderProfile();
     case "settings": return renderSettings();
@@ -393,8 +395,82 @@ async function renderOrderHistory() {
 }
 
 async function renderHome() {
-  if (user.role === "supervisor" || user.role === "warehouse" || user.role === "admin") {
-    const isAdmin = user.role === "admin";
+  if (user.role === "admin") {
+    let d = {};
+    try { d = await api("/admin/dashboard"); } catch (e) {
+      return `<div class="page-h"><h1>Главная</h1></div><div class="error">${e.message}</div>`;
+    }
+    const fmt = (n) => Number(n || 0).toLocaleString("ru-RU") + " ₽";
+    return `
+      <div class="page-h"><h1>Главная</h1>
+        <span style="color:var(--muted);font-size:0.85rem">${d.month_key || ""}</span>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Активные сотрудники</div>
+        <div class="stat-grid" style="margin-top:0.5rem">
+          <div class="stat-card">
+            <div class="label">Менеджеры</div>
+            <div class="value">${d.managers_active || 0}</div>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='mgrRating';render()">Рейтинг</button>
+          </div>
+          <div class="stat-card">
+            <div class="label">Исполнители</div>
+            <div class="value">${d.executors_active || 0}</div>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='exRating';render()">Рейтинг</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="label">Общая выплата сотрудникам</div>
+          <div class="value lime">${fmt(d.total_payout_due)}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Домовой · за месяц</div>
+          <div class="value lime">${fmt(d.company_earned)}</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Заказы</div>
+        <div class="stat-grid" style="margin-top:0.5rem">
+          <div class="stat-card">
+            <div class="label">Активные</div>
+            <div class="value">${d.orders_active || 0}</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Завершённые</div>
+            <div class="value">${d.orders_done || 0}</div>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='orderHistory';render()">История</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Активные заказы</div>
+        ${(d.active_orders && d.active_orders.length) ? `<div class="table-wrap"><table>
+          <thead><tr><th>Заказ</th><th>Статус</th><th>Сумма</th></tr></thead>
+          <tbody>${d.active_orders.map(o => `<tr>
+            <td><strong>${o.id}</strong><br><small style="color:var(--muted)">${o.address || ""}</small></td>
+            <td>${o.status_label || o.status}</td>
+            <td>${o.payment_amount != null ? Number(o.payment_amount).toLocaleString("ru-RU") + " ₽" : "—"}</td>
+          </tr>`).join("")}</tbody></table></div>` : `<p style="color:var(--muted);margin:0.5rem 0 0">Нет активных</p>`}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Склад (быстрый доступ)</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem">
+          <button type="button" class="btn btn-primary btn-sm" onclick="page='assemble';render()">Сборка</button>
+          <button type="button" class="btn btn-accent btn-sm" onclick="page='issue';render()">Выдача</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="page='unpack';render()">Разбор</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="page='board';render()">Очередь</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="page='bags';render()">Сумки</button>
+        </div>
+      </div>`;
+  }
+  if (user.role === "supervisor" || user.role === "warehouse") {
     return `
       <div class="page-h"><h1>Склад</h1></div>
       <div id="signal-banner" class="card" style="border-color:var(--warning);color:var(--warning);display:none"></div>
@@ -409,11 +485,6 @@ async function renderHome() {
       <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:0.5rem">
         <button class="btn btn-ghost btn-sm" onclick="page='shift';render()">Смена</button>
         <button class="btn btn-ghost btn-sm" onclick="page='board';render()">Очередь</button>
-        ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="page='cells';render()">Ячейки</button>
-        <button class="btn btn-ghost btn-sm" onclick="page='bags';render()">Сумки</button>
-        <button class="btn btn-ghost btn-sm" onclick="page='settings';render()">Настройки</button>
-        <button class="btn btn-ghost btn-sm" onclick="page='qr';render()">QR</button>
-        <button class="btn btn-ghost btn-sm" onclick="page='profile';render()">Профиль</button>` : ""}
       </div>`;
   }
   if (user.status === "blocked") {
@@ -1813,33 +1884,83 @@ window.downloadBackup = async () => {
   } catch (e) { toast(e.message, true); }
 };
 
+
 async function renderQrTool() {
   return `
-    <div class="page-h"><h1>QR-коды</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+    <div class="page-h"><h1>Печать ШК</h1></div>
     <div class="card">
-      <p style="color:var(--muted);font-size:0.9rem;margin-bottom:0.75rem">
-        Введите код (us… / dd… / sumka… / DY… / 6 цифр склада / 11 цифр поставки) — QR для экрана или печати.
-      </p>
-      <input id="qr-code" placeholder="us000003 или dd10000001"
+      <label>Код</label>
+      <input id="qr-code" placeholder="dd… / sumka… / 11 цифр / us… / DY…"
         onkeydown="if(event.key==='Enter')qrShow()" />
-      <button class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="qrShow()">Показать QR</button>
+      <button type="button" class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="qrShow()">Сформировать</button>
     </div>
-    <div id="qr-out" style="text-align:center;margin-top:1rem"></div>`;
+    <div id="qr-out" style="margin-top:1rem"></div>`;
 }
-window.qrShow = () => {
-  const code = (document.getElementById("qr-code")?.value || "").trim();
+
+function qrApi(data, size) {
+  size = size || 120;
+  return "https://api.qrserver.com/v1/create-qr-code/?size=" + size + "x" + size + "&margin=4&data=" + encodeURIComponent(data);
+}
+function barcodeApi(data) {
+  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=2&height=12&includetext=false";
+}
+
+window.qrShow = function () {
+  var code = (document.getElementById("qr-code") && document.getElementById("qr-code").value || "").trim();
   if (!code) { toast("Введите код", true); return; }
-  const url = "https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=12&data=" + encodeURIComponent(code);
-  document.getElementById("qr-out").innerHTML = `
-    <div class="card">
-      <img src="${url}" width="280" height="280" alt="QR"
-        style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />
-      <div style="font-size:1.25rem;font-weight:700;margin-top:1rem;letter-spacing:0.03em">${code}</div>
-      <p style="color:var(--muted);font-size:0.85rem;margin-top:0.5rem">Сделайте скрин или откройте картинку для печати</p>
-    </div>`;
+  var c = code.toLowerCase();
+  var html = "";
+  if (/^dd\d{8}$/i.test(c)) {
+    var top = c.slice(0, 6);
+    var bot = c.slice(6);
+    html = '<div class="card" style="background:#fff;color:#000;max-width:280px;margin:0 auto;text-align:center;padding:12px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px">'
+      + '<img src="' + qrApi(c, 72) + '" width="72" height="72" />'
+      + '<div style="font-size:0.65rem;font-weight:800">ДОМОВОЙ</div>'
+      + '<img src="' + qrApi(c, 72) + '" width="72" height="72" /></div>'
+      + '<div style="font-size:1.35rem;font-weight:900;margin-top:8px;line-height:1.05">' + top + '<br>' + bot + '</div></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Формат DD · зажми → сохранить в галерею</p>';
+  } else if (/^\d{11}$/.test(code)) {
+    html = '<div class="card" style="background:#fff;color:#000;max-width:320px;margin:0 auto;padding:12px">'
+      + '<div style="display:flex;justify-content:space-between"><div style="font-size:0.7rem;font-weight:800">ДОМОВОЙ</div>'
+      + '<img src="' + qrApi(code, 64) + '" width="64" height="64" /></div>'
+      + '<div style="font-size:1.4rem;font-weight:900;margin:6px 0">001066</div>'
+      + '<div style="font-size:1.1rem;font-style:italic;text-align:center">Поставка</div>'
+      + '<div style="font-size:1.25rem;font-weight:800;text-align:center;margin:6px 0">' + code + '</div>'
+      + '<img src="' + barcodeApi(code) + '" style="width:100%;height:48px;object-fit:contain" /></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Формат поставки</p>'
+      + '<label>Код склада</label><input id="ship-wh" value="001066" style="max-width:160px" />'
+      + '<button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="qrShowShip(\'' + code + '\')">Обновить склад</button>';
+  } else if (/^sumka\d{5}$/i.test(c)) {
+    html = '<div class="card" style="background:#fff;color:#000;max-width:320px;margin:0 auto;padding:12px;text-align:center">'
+      + '<div style="font-size:1.35rem;font-weight:900;margin-bottom:8px">' + c + '</div>'
+      + '<img src="' + barcodeApi(c) + '" style="width:100%;height:52px;object-fit:contain" />'
+      + '<div style="display:flex;justify-content:center;gap:8px;margin-top:10px">'
+      + '<img src="' + qrApi(c, 70) + '" width="70" height="70" />'
+      + '<img src="' + qrApi(c, 70) + '" width="70" height="70" />'
+      + '<img src="' + qrApi(c, 70) + '" width="70" height="70" /></div></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Формат сумки · сохрани в галерею</p>';
+  } else {
+    html = '<div class="card" style="text-align:center">'
+      + '<img src="' + qrApi(code, 280) + '" width="280" height="280" style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />'
+      + '<div style="font-size:1.15rem;font-weight:700;margin-top:1rem">' + code + '</div>'
+      + '<p style="color:var(--muted);font-size:0.85rem;margin-top:0.5rem">Обычный QR · зажми → сохранить</p></div>';
+  }
+  document.getElementById("qr-out").innerHTML = html;
 };
 
+window.qrShowShip = function (code) {
+  var wh = (document.getElementById("ship-wh") && document.getElementById("ship-wh").value || "001066").trim();
+  document.getElementById("qr-out").innerHTML =
+    '<div class="card" style="background:#fff;color:#000;max-width:320px;margin:0 auto;padding:12px">'
+    + '<div style="display:flex;justify-content:space-between"><div style="font-size:0.7rem;font-weight:800">ДОМОВОЙ</div>'
+    + '<img src="' + qrApi(code, 64) + '" width="64" height="64" /></div>'
+    + '<div style="font-size:1.4rem;font-weight:900;margin:6px 0">' + wh + '</div>'
+    + '<div style="font-size:1.1rem;font-style:italic;text-align:center">Поставка</div>'
+    + '<div style="font-size:1.25rem;font-weight:800;text-align:center;margin:6px 0">' + code + '</div>'
+    + '<img src="' + barcodeApi(code) + '" style="width:100%;height:48px;object-fit:contain" /></div>'
+    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми → сохранить в фото</p>';
+};
 
 
 function fmtOrderTime(iso) {
@@ -2040,6 +2161,45 @@ window.downloadFinanceCsv = async () => {
     toast("Файл скачан");
   } catch (e) { toast(e.message, true); }
 };
+
+
+async function renderMgrRating() {
+  let d = {};
+  try { d = await api("/admin/dashboard"); } catch (e) {
+    return `<div class="page-h"><h1>Рейтинг менеджеров</h1></div><div class="error">${e.message}</div>`;
+  }
+  const rows = d.manager_rating || [];
+  return `
+    <div class="page-h"><h1>Рейтинг менеджеров</h1>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+    ${rows.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Менеджер</th><th>Заказы</th><th>Выполнено</th><th>Комиссия</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${r.full_name}<br><small style="color:var(--muted)">${r.user_id}</small></td>
+        <td>${r.orders}</td>
+        <td>${r.done}</td>
+        <td style="font-weight:700;color:var(--primary)">${Number(r.commission||0).toLocaleString("ru-RU")} ₽</td>
+      </tr>`).join("")}</tbody></table></div>` : `<div class="card"><p style="color:var(--muted);margin:0">Нет данных</p></div>`}`;
+}
+
+async function renderExRating() {
+  let d = {};
+  try { d = await api("/admin/dashboard"); } catch (e) {
+    return `<div class="page-h"><h1>Рейтинг исполнителей</h1></div><div class="error">${e.message}</div>`;
+  }
+  const rows = d.executor_rating || [];
+  return `
+    <div class="page-h"><h1>Рейтинг исполнителей</h1>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+    ${rows.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Исполнитель</th><th>Активные</th><th>Выполнено</th><th>Заработано</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${r.full_name}<br><small style="color:var(--muted)">${r.user_id}</small></td>
+        <td>${r.active || 0}</td>
+        <td>${r.done}</td>
+        <td style="font-weight:700;color:var(--primary)">${Number(r.commission||0).toLocaleString("ru-RU")} ₽</td>
+      </tr>`).join("")}</tbody></table></div>` : `<div class="card"><p style="color:var(--muted);margin:0">Нет данных</p></div>`}`;
+}
 
 async function renderCrmReport() {
   const d = await api("/finance/crm-report");

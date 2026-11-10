@@ -757,6 +757,7 @@ def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends
         raise HTTPException(404, "Исполнитель не найден")
     if executor.status == "blocked":
         raise HTTPException(403, "Сотрудник заблокирован. Передача сумки невозможна")
+    require_on_shift(db, exec_id, "Исполнитель")
     if executor.status != "active":
         raise HTTPException(403, "Учётная запись неактивна")
     if executor.role not in ("executor", "cleaner", "handyman"):
@@ -1316,8 +1317,10 @@ def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User 
     executor_id = None
     if data.executor_id and user.role in ("admin", "supervisor", "warehouse"):
         ex = db.query(User).filter(User.id == normalize(data.executor_id).lower()).first()
+        if ex:
+            require_on_shift(db, normalize(data.executor_id).lower(), "Исполнитель")
         if not ex or ex.role not in ("executor", "cleaner", "handyman"):
-            raise HTTPException(400, "Исполнитель: клинер или мастер")
+            raise HTTPException(400, "Нужен исполнитель (роль исполнитель)")
         if getattr(ex, "status", None) == "blocked":
             raise HTTPException(400, "Исполнитель заблокирован")
         executor_id = normalize(data.executor_id).lower()
@@ -1397,6 +1400,8 @@ def send_to_assembly(order_id: str, db: Session = Depends(get_db), user: User = 
 
 @app.post("/api/orders/{order_id}/request-complete")
 def request_complete(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role in ("executor", "cleaner", "handyman"):
+        require_on_shift(db, user.id, "Вы")
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
@@ -2081,11 +2086,31 @@ def delete_warehouse(code: str, db: Session = Depends(get_db), user: User = Depe
     db.commit()
     return {"ok": True}
 
+
+def _shift_today_str() -> str:
+    try:
+        return now_app().strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.utcnow().strftime("%Y-%m-%d")
+
+def is_on_shift(db: Session, user_id: str, warehouse_code: str = None) -> bool:
+    """Сотрудник отмечен на смене сегодня (любой склад или указанный)."""
+    uid = normalize(user_id).lower()
+    today = _shift_today_str()
+    q = db.query(ShiftEntry).filter(ShiftEntry.user_id == uid, ShiftEntry.shift_date == today)
+    if warehouse_code:
+        q = q.filter(ShiftEntry.warehouse_code == normalize(warehouse_code))
+    return q.first() is not None
+
+def require_on_shift(db: Session, user_id: str, who: str = "Сотрудник"):
+    if not is_on_shift(db, user_id):
+        raise HTTPException(400, f"{who} не отмечен на смене. Отметьте в разделе «Смена».")
+
 # ---------- shift ----------
 @app.get("/api/shift/today")
 def shift_today(warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     wh = normalize(warehouse_code)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = _shift_today_str()
     rows = db.query(ShiftEntry).filter(ShiftEntry.warehouse_code == wh, ShiftEntry.shift_date == today).all()
     result = []
     for r in rows:
@@ -2107,7 +2132,7 @@ def shift_mark(data: ShiftMarkIn, db: Session = Depends(get_db), user: User = De
     u = db.query(User).filter(User.id == uid).first()
     if not u or u.status != "active":
         raise HTTPException(404, "Сотрудник не найден или неактивен")
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = _shift_today_str()
     exists = db.query(ShiftEntry).filter(
         ShiftEntry.warehouse_code == wh, ShiftEntry.user_id == uid, ShiftEntry.shift_date == today
     ).first()
@@ -2122,7 +2147,7 @@ def shift_mark(data: ShiftMarkIn, db: Session = Depends(get_db), user: User = De
 def shift_unmark(user_id: str, warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
     uid = normalize(user_id).lower()
     wh = normalize(warehouse_code)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = _shift_today_str()
     row = db.query(ShiftEntry).filter(
         ShiftEntry.warehouse_code == wh, ShiftEntry.user_id == uid, ShiftEntry.shift_date == today
     ).first()
@@ -2133,18 +2158,14 @@ def shift_unmark(user_id: str, warehouse_code: str, db: Session = Depends(get_db
 
 @app.get("/api/shift/executors")
 def shift_executors(warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Исполнители на смене — для выбора в заказе."""
+    """Только исполнители, отмеченные на смене сегодня."""
     wh = normalize(warehouse_code)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = _shift_today_str()
     rows = db.query(ShiftEntry).filter(ShiftEntry.warehouse_code == wh, ShiftEntry.shift_date == today).all()
     result = []
     for r in rows:
         u = db.query(User).filter(User.id == r.user_id, User.role.in_(list(EXECUTOR_ROLES) if "EXECUTOR_ROLES" in dir() else ["executor", "cleaner", "handyman"]), User.status == "active").first()
         if u:
-            result.append({"id": u.id, "full_name": u.full_name, "role": u.role, "role_label": ROLE_LABELS.get(u.role, u.role)})
-    # если смена пустая — fallback все клинеры (чтобы не блокировать)
-    if not result:
-        for u in db.query(User).filter(User.role.in_(list(EXECUTOR_ROLES) if "EXECUTOR_ROLES" in dir() else ["executor", "cleaner", "handyman"]), User.status == "active").all():
             result.append({"id": u.id, "full_name": u.full_name, "role": u.role, "role_label": ROLE_LABELS.get(u.role, u.role)})
     return result
 
@@ -2920,6 +2941,104 @@ def finance_payout_one(user_id: str, db: Session = Depends(get_db), user: User =
         "gross": gross,
         "fines": fine_sum,
     }
+
+
+@app.get("/api/admin/dashboard")
+def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Главная админа: сотрудники, выплаты, заказы, рейтинги."""
+    ensure_month_rollover(db)
+    mk = _month_key()
+    managers = db.query(User).filter(
+        User.role == "order_manager", User.status != "fired"
+    ).all()
+    executors = db.query(User).filter(
+        User.role.in_(["executor", "cleaner", "handyman"]),
+        User.status != "fired",
+    ).all()
+    # активные = отмечены на смене сегодня
+    mgr_active = [u for u in managers if u.status == "active" and is_on_shift(db, u.id)]
+    ex_active = [u for u in executors if u.status == "active" and is_on_shift(db, u.id)]
+
+    total_payout_due = 0
+    for u in list(managers) + list(executors):
+        total_payout_due += user_awaiting_balance(db, u.id)
+
+    company_earned = sum(r.amount for r in db.query(CommissionEntry).filter(
+        CommissionEntry.party == "company",
+        CommissionEntry.status.in_(["awaiting", "paid"]),
+        CommissionEntry.month_key == mk,
+    ).all())
+
+    orders = db.query(Order).all()
+    active_orders = [o for o in orders if o.status not in ("done", "cancelled")]
+    done_orders = [o for o in orders if o.status == "done"]
+
+    # рейтинги менеджеров за месяц
+    mgr_rating = []
+    for u in managers:
+        olist = db.query(Order).filter(Order.created_by == u.id, Order.status != "cancelled").all()
+        # commission paid+awaiting this month
+        comm = sum(r.amount for r in db.query(CommissionEntry).filter(
+            CommissionEntry.user_id == u.id,
+            CommissionEntry.party == "manager",
+            CommissionEntry.month_key == mk,
+            CommissionEntry.status.in_(["awaiting", "paid"]),
+        ).all())
+        done_n = len([o for o in olist if o.status == "done"])
+        mgr_rating.append({
+            "user_id": u.id, "full_name": u.full_name,
+            "orders": len(olist), "done": done_n, "commission": comm,
+            "status": u.status,
+        })
+    mgr_rating.sort(key=lambda x: (-x["commission"], -x["orders"]))
+
+    ex_rating = []
+    for u in executors:
+        olist = db.query(Order).filter(Order.executor_id == u.id, Order.status != "cancelled").all()
+        comm = sum(r.amount for r in db.query(CommissionEntry).filter(
+            CommissionEntry.user_id == u.id,
+            CommissionEntry.party == "executor",
+            CommissionEntry.month_key == mk,
+            CommissionEntry.status.in_(["awaiting", "paid"]),
+        ).all())
+        done_n = len([o for o in olist if o.status == "done"])
+        active_n = len([o for o in olist if o.status not in ("done", "cancelled")])
+        ex_rating.append({
+            "user_id": u.id, "full_name": u.full_name,
+            "orders": len(olist), "done": done_n, "active": active_n,
+            "commission": comm, "status": u.status,
+        })
+    ex_rating.sort(key=lambda x: (-x["commission"], -x["done"]))
+
+    active_list = sorted(
+        active_orders,
+        key=lambda o: (o.scheduled_at is None, o.scheduled_at or datetime.min),
+    )[:30]
+
+    return {
+        "month_key": mk,
+        "managers_active": len(mgr_active),
+        "managers_total": len(managers),
+        "executors_active": len(ex_active),
+        "executors_total": len(executors),
+        "total_payout_due": total_payout_due,
+        "company_earned": company_earned,
+        "orders_active": len(active_orders),
+        "orders_done": len(done_orders),
+        "manager_rating": mgr_rating,
+        "executor_rating": ex_rating,
+        "active_orders": [{
+            "id": o.id,
+            "address": o.address,
+            "status": o.status,
+            "status_label": ORDER_LABELS.get(o.status, o.status),
+            "executor_id": o.executor_id,
+            "payment_amount": o.payment_amount,
+            "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
+        } for o in active_list],
+        "pct": get_pct_settings(db),
+    }
+
 
 @app.get("/api/finance/crm-report")
 def finance_crm_report(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
