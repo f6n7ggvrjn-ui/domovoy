@@ -189,6 +189,21 @@ function navItems() {
 }
 
 window.go = function(p) { page = p; window.page = p; render(); };
+function recoverLayout() {
+  try {
+    document.documentElement.style.zoom = "1";
+    document.body.style.zoom = "1";
+    document.body.style.transform = "none";
+    document.documentElement.style.transform = "none";
+    var app = document.getElementById("screen-app");
+    if (app) { app.style.transform = "none"; app.style.width = "100%"; }
+    var c = document.getElementById("content");
+    if (c) { c.style.transform = "none"; c.style.width = "100%"; }
+    window.scrollTo(0, 0);
+  } catch (_) {}
+}
+window.recoverLayout = recoverLayout;
+
 function render() {
   window.page = page;
   document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role}`;
@@ -254,6 +269,7 @@ async function renderPage() {
   }
 }
 function afterRender() {
+  recoverLayout();
   if (document.getElementById('tg-status') && typeof window.loadTgStatus === 'function') window.loadTgStatus();
 
 
@@ -1951,6 +1967,7 @@ window.qrShow = function () {
       + '<div style="font-size:1.2rem;font-weight:700;margin-top:1rem">' + code + '</div></div>';
   }
   document.getElementById("qr-out").innerHTML = html;
+  setTimeout(recoverLayout, 50);
 };
 
 window.qrShowShip = function (code) {
@@ -2328,3 +2345,11 @@ window.loadTgStatus = async () => {
     el.textContent = "";
   }
 };
+
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "visible") recoverLayout();
+});
+window.addEventListener("pageshow", function () { recoverLayout(); });
+window.addEventListener("orientationchange", function () {
+  setTimeout(recoverLayout, 200);
+});

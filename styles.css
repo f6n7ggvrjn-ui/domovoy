@@ -302,3 +302,37 @@ html, body {
 @media (max-width: 600px) {
   .stat-grid { grid-template-columns: 1fr; }
 }
+
+/* print-shk stable — после скрина iPad не косит */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  transform: none !important;
+  zoom: 1 !important;
+  -webkit-transform: none !important;
+}
+#screen-app, .content, .nav, .header {
+  transform: none !important;
+  max-width: 100%;
+}
+.label-sheet {
+  transform: none !important;
+  image-rendering: -webkit-optimize-contrast;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+/* белая этикетка не растягивает весь layout */
+#qr-out {
+  overflow: visible;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+#qr-out img {
+  max-width: 100%;
+  height: auto;
+  -webkit-touch-callout: default;
+}
