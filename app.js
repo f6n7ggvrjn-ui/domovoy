@@ -1937,7 +1937,7 @@ function qrApi(data, size) {
   return "https://api.qrserver.com/v1/create-qr-code/?size=" + size + "x" + size + "&margin=4&data=" + encodeURIComponent(data);
 }
 function barcodeApi(data) {
-  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=5&height=22&includetext=false";
+  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=6&height=28&includetext=false";
 }
 
 window.qrShow = function () {
@@ -1988,22 +1988,29 @@ window.qrShowShip = function (code) {
   var from = (document.getElementById("ship-from") && document.getElementById("ship-from").value || "001066").trim();
   var to = (document.getElementById("ship-to") && document.getElementById("ship-to").value || "").trim();
   var box = document.getElementById("ship-label-out") || document.getElementById("qr-out");
+  // Макет: DM | ДОМОВОЙ | DM → маршрут → «Поставка» → номер → крупный штрихкод
   box.innerHTML =
-    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:480px;margin:0 auto;padding:22px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px">'
-    + '<img src="' + dmApi(code, 5) + '" style="width:110px;height:110px;object-fit:contain" />'
-    + '<div style="font-size:1.05rem;font-weight:800;letter-spacing:0.06em">ДОМОВОЙ</div>'
-    + '<img src="' + dmApi(code, 5) + '" style="width:110px;height:110px;object-fit:contain" /></div>'
-    + '<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin:16px 0">'
-    + '<div style="font-size:1.7rem;font-weight:900">' + from + '</div>'
-    + '<div style="font-size:1.9rem;font-weight:900">→</div>'
-    + '<div style="font-size:1.7rem;font-weight:900">' + (to || "—") + '</div></div>'
-    + '<div style="font-size:1.3rem;font-style:italic;text-align:center;margin:8px 0">Поставка</div>'
-    + '<div style="font-size:1.5rem;font-weight:800;text-align:center;margin:12px 0;letter-spacing:0.04em">' + code + '</div>'
-    + '<img src="' + barcodeApi(code) + '" style="width:100%;height:96px;object-fit:contain" /></div>'
-    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми → сохранить</p>';
+    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:480px;margin:0 auto;padding:20px 18px 16px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'
+    + '<img src="' + dmApi(code, 5) + '" style="width:100px;height:100px;object-fit:contain" alt="dm" />'
+    + '<div style="font-size:1rem;font-weight:800;letter-spacing:0.06em">ДОМОВОЙ</div>'
+    + '<img src="' + dmApi(code, 5) + '" style="width:100px;height:100px;object-fit:contain" alt="dm" />'
+    + '</div>'
+    // зелёный: откуда → куда
+    + '<div style="text-align:center;margin-top:14px;font-size:1.55rem;font-weight:900;letter-spacing:0.02em">'
+    + from + ' → ' + (to || "—") + '</div>'
+    // жёлтый: Поставка
+    + '<div style="text-align:center;margin-top:10px;font-size:1.25rem;font-style:italic">Поставка</div>'
+    // синий: номер (11 цифр)
+    + '<div style="text-align:center;margin-top:10px;font-size:1.55rem;font-weight:800;letter-spacing:0.06em">' + code + '</div>'
+    // красный: крупный линейный штрихкод
+    + '<div style="margin-top:14px;padding:8px 0 4px">'
+    + '<img src="' + barcodeApi(code) + '" alt="barcode" style="width:100%;height:110px;object-fit:contain;object-position:center" />'
+    + '</div></div>'
+    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми этикетку → сохранить</p>';
   setTimeout(function(){ if (typeof recoverLayout === "function") recoverLayout(); }, 50);
 };
+
 
 
 function fmtOrderTime(iso) {
