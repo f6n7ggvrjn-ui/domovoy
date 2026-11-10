@@ -2369,23 +2369,3 @@ window.addEventListener("orientationchange", function () {
   setTimeout(recoverLayout, 200);
 });
 
-(function initLoginInputs() {
-  function unlock(el) {
-    if (!el) return;
-    el.removeAttribute("readonly");
-    el.removeAttribute("disabled");
-    el.style.pointerEvents = "auto";
-    el.style.fontSize = "16px";
-  }
-  function setup() {
-    unlock(document.getElementById("login-id"));
-    unlock(document.getElementById("login-pass"));
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", setup);
-  } else {
-    setup();
-  }
-  setTimeout(setup, 300);
-  setTimeout(setup, 1000);
-})();
