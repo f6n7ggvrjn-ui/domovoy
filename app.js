@@ -270,6 +270,14 @@ async function renderPage() {
 }
 function afterRender() {
   recoverLayout();
+  var q = document.getElementById("qr-code");
+  if (q) {
+    q.style.fontSize = "16px";
+    q.addEventListener("touchstart", function () {
+      q.focus();
+    }, { passive: true });
+  }
+
   if (document.getElementById('tg-status') && typeof window.loadTgStatus === 'function') window.loadTgStatus();
 
 
@@ -1906,13 +1914,17 @@ window.downloadBackup = async () => {
 
 
 
+
 async function renderQrTool() {
   return `
     <div class="page-h"><h1>Печать ШК</h1></div>
     <div class="card">
-      <label>Код</label>
-      <input id="qr-code" placeholder="dd… / sumka… / 11 цифр поставки / us…"
-        onkeydown="if(event.key==='Enter')qrShow()" />
+      <label for="qr-code">Код</label>
+      <input id="qr-code" name="qr-code" type="text" inputmode="text"
+        placeholder="dd… / sumka… / 11 цифр / us…"
+        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+        style="font-size:16px;-webkit-user-select:text;user-select:text;"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();qrShow();}" />
       <button type="button" class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="qrShow()">Сформировать</button>
     </div>
     <div id="qr-out" style="margin-top:1rem"></div>`;
@@ -1920,54 +1932,58 @@ async function renderQrTool() {
 
 function dmApi(data, scale) {
   scale = scale || 5;
-  return "https://bwipjs-api.metafloor.com/?bcid=datamatrix&text=" + encodeURIComponent(data) + "&scale=" + scale + "&padding=4";
+  return "https://bwipjs-api.metafloor.com/?bcid=datamatrix&text=" + encodeURIComponent(data) + "&scale=" + scale + "&padding=2";
 }
 function qrApi(data, size) {
   size = size || 120;
   return "https://api.qrserver.com/v1/create-qr-code/?size=" + size + "x" + size + "&margin=4&data=" + encodeURIComponent(data);
 }
 function barcodeApi(data) {
-  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=3&height=14&includetext=false";
+  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=5&height=22&includetext=false";
 }
 
 window.qrShow = function () {
-  var code = (document.getElementById("qr-code") && document.getElementById("qr-code").value || "").trim();
+  var el = document.getElementById("qr-code");
+  var code = (el && el.value || "").trim();
   if (!code) { toast("Введите код", true); return; }
   var c = code.toLowerCase();
   var html = "";
+  // DD — крупные Data Matrix (как 3 QR на сумке по ширине)
   if (/^dd\d{8}$/i.test(c)) {
     var top = c.slice(0, 6);
     var bot = c.slice(6);
-    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;text-align:center;padding:20px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">'
-      + '<img src="' + dmApi(c, 6) + '" style="width:110px;height:110px;object-fit:contain" />'
-      + '<div style="font-size:0.95rem;font-weight:800;letter-spacing:0.04em">ДОМОВОЙ</div>'
-      + '<img src="' + dmApi(c, 6) + '" style="width:110px;height:110px;object-fit:contain" /></div>'
-      + '<div style="font-size:2rem;font-weight:900;margin-top:16px;line-height:1.05">' + top + '<br>' + bot + '</div></div>'
-      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix · зажми → сохранить</p>';
+    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:480px;margin:0 auto;text-align:center;padding:22px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:14px">'
+      + '<img src="' + dmApi(c, 5) + '" alt="dm" style="width:110px;height:110px;object-fit:contain" />'
+      + '<div style="font-size:1.05rem;font-weight:800;letter-spacing:0.05em">ДОМОВОЙ</div>'
+      + '<img src="' + dmApi(c, 5) + '" alt="dm" style="width:110px;height:110px;object-fit:contain" /></div>'
+      + '<div style="font-size:2.15rem;font-weight:900;margin-top:18px;line-height:1.05">' + top + '<br>' + bot + '</div></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми этикетку → сохранить</p>';
   } else if (/^\d{11}$/.test(code)) {
-    html = '<div class="card" style="max-width:440px;margin:0 auto">'
-      + '<label>Склад-отправитель</label><input id="ship-from" value="001066" />'
-      + '<label>Склад-получатель</label><input id="ship-to" value="001067" />'
+    html = '<div class="card" style="max-width:480px;margin:0 auto">'
+      + '<label for="ship-from">Склад-отправитель</label>'
+      + '<input id="ship-from" value="001066" style="font-size:16px" inputmode="numeric" />'
+      + '<label for="ship-to">Склад-получатель</label>'
+      + '<input id="ship-to" value="001067" style="font-size:16px" inputmode="numeric" />'
       + '<button type="button" class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="qrShowShip(\'' + code + '\')">Показать этикетку</button></div>'
       + '<div id="ship-label-out" style="margin-top:1rem"></div>';
-    setTimeout(function(){ window.qrShowShip(code); }, 30);
+    setTimeout(function(){ window.qrShowShip(code); }, 40);
   } else if (/^sumka\d{5}$/i.test(c)) {
-    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;padding:20px;text-align:center">'
-      + '<div style="font-size:1.75rem;font-weight:900;margin-bottom:12px">' + c + '</div>'
-      + '<img src="' + barcodeApi(c) + '" style="width:100%;height:64px;object-fit:contain" />'
-      + '<div style="display:flex;justify-content:center;gap:12px;margin-top:14px">'
-      + '<img src="' + qrApi(c, 100) + '" width="100" height="100" />'
-      + '<img src="' + qrApi(c, 100) + '" width="100" height="100" />'
-      + '<img src="' + qrApi(c, 100) + '" width="100" height="100" /></div></div>'
+    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:480px;margin:0 auto;padding:22px;text-align:center">'
+      + '<div style="font-size:1.85rem;font-weight:900;margin-bottom:12px">' + c + '</div>'
+      + '<img src="' + barcodeApi(c) + '" style="width:100%;height:96px;object-fit:contain" />'
+      + '<div style="display:flex;justify-content:center;gap:14px;margin-top:16px">'
+      + '<img src="' + qrApi(c, 120) + '" width="120" height="120" />'
+      + '<img src="' + qrApi(c, 120) + '" width="120" height="120" />'
+      + '<img src="' + qrApi(c, 120) + '" width="120" height="120" /></div></div>'
       + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Сумка · сохрани в галерею</p>';
   } else {
-    html = '<div class="card" style="text-align:center;max-width:360px;margin:0 auto">'
+    html = '<div class="card" style="text-align:center;max-width:380px;margin:0 auto">'
       + '<img src="' + qrApi(code, 300) + '" width="300" height="300" style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />'
       + '<div style="font-size:1.2rem;font-weight:700;margin-top:1rem">' + code + '</div></div>';
   }
   document.getElementById("qr-out").innerHTML = html;
-  setTimeout(recoverLayout, 50);
+  setTimeout(function(){ if (typeof recoverLayout === "function") recoverLayout(); }, 50);
 };
 
 window.qrShowShip = function (code) {
@@ -1975,19 +1991,20 @@ window.qrShowShip = function (code) {
   var to = (document.getElementById("ship-to") && document.getElementById("ship-to").value || "").trim();
   var box = document.getElementById("ship-label-out") || document.getElementById("qr-out");
   box.innerHTML =
-    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:440px;margin:0 auto;padding:20px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px">'
-    + '<img src="' + dmApi(code, 5) + '" style="width:92px;height:92px;object-fit:contain" />'
-    + '<div style="font-size:1rem;font-weight:800;letter-spacing:0.06em">ДОМОВОЙ</div>'
-    + '<img src="' + dmApi(code, 5) + '" style="width:92px;height:92px;object-fit:contain" /></div>'
-    + '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin:14px 0">'
-    + '<div style="font-size:1.6rem;font-weight:900">' + from + '</div>'
-    + '<div style="font-size:1.8rem;font-weight:900">→</div>'
-    + '<div style="font-size:1.6rem;font-weight:900">' + (to || "—") + '</div></div>'
-    + '<div style="font-size:1.25rem;font-style:italic;text-align:center;margin:8px 0">Поставка</div>'
-    + '<div style="font-size:1.45rem;font-weight:800;text-align:center;margin:10px 0;letter-spacing:0.04em">' + code + '</div>'
-    + '<img src="' + barcodeApi(code) + '" style="width:100%;height:64px;object-fit:contain" /></div>'
-    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix слева и справа · зажми → сохранить</p>';
+    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:480px;margin:0 auto;padding:22px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px">'
+    + '<img src="' + dmApi(code, 5) + '" style="width:110px;height:110px;object-fit:contain" />'
+    + '<div style="font-size:1.05rem;font-weight:800;letter-spacing:0.06em">ДОМОВОЙ</div>'
+    + '<img src="' + dmApi(code, 5) + '" style="width:110px;height:110px;object-fit:contain" /></div>'
+    + '<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin:16px 0">'
+    + '<div style="font-size:1.7rem;font-weight:900">' + from + '</div>'
+    + '<div style="font-size:1.9rem;font-weight:900">→</div>'
+    + '<div style="font-size:1.7rem;font-weight:900">' + (to || "—") + '</div></div>'
+    + '<div style="font-size:1.3rem;font-style:italic;text-align:center;margin:8px 0">Поставка</div>'
+    + '<div style="font-size:1.5rem;font-weight:800;text-align:center;margin:12px 0;letter-spacing:0.04em">' + code + '</div>'
+    + '<img src="' + barcodeApi(code) + '" style="width:100%;height:96px;object-fit:contain" /></div>'
+    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми → сохранить</p>';
+  setTimeout(function(){ if (typeof recoverLayout === "function") recoverLayout(); }, 50);
 };
 
 
