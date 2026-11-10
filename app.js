@@ -207,7 +207,7 @@ function render() {
   });
   const c = document.getElementById("content");
   c.innerHTML = "<p style='color:var(--muted)'>Загрузка...</p>";
-  Promise.resolve(renderPage()).then(html => { c.innerHTML = html; afterRender(); })
+  Promise.resolve(renderPage()).then(html => { c.innerHTML = html; afterRender(); try { window.scrollTo(0,0); c.scrollTop = 0; } catch(_){} })
     .catch(e => { c.innerHTML = `<div class="error">${e.message}</div>`; });
 }
 
@@ -412,12 +412,12 @@ async function renderHome() {
           <div class="stat-card">
             <div class="label">Менеджеры</div>
             <div class="value">${d.managers_active || 0}</div>
-            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='mgrRating';render()">Рейтинг</button>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='mgrRating';render()">Рейтинг менеджеров</button>
           </div>
           <div class="stat-card">
             <div class="label">Исполнители</div>
             <div class="value">${d.executors_active || 0}</div>
-            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='exRating';render()">Рейтинг</button>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='exRating';render()">Рейтинг исполнителей</button>
           </div>
         </div>
       </div>
@@ -1885,6 +1885,7 @@ window.downloadBackup = async () => {
 };
 
 
+
 async function renderQrTool() {
   return `
     <div class="page-h"><h1>Печать ШК</h1></div>
@@ -1897,13 +1898,18 @@ async function renderQrTool() {
     <div id="qr-out" style="margin-top:1rem"></div>`;
 }
 
+function dmApi(data, scale) {
+  scale = scale || 5;
+  return "https://bwipjs-api.metafloor.com/?bcid=datamatrix&text=" + encodeURIComponent(data) + "&scale=" + scale + "&padding=4";
+}
 function qrApi(data, size) {
   size = size || 120;
   return "https://api.qrserver.com/v1/create-qr-code/?size=" + size + "x" + size + "&margin=4&data=" + encodeURIComponent(data);
 }
 function barcodeApi(data) {
-  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=2&height=12&includetext=false";
+  return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=3&height=14&includetext=false";
 }
+var LOGO_URL = "/logo-domovoy.jpg";
 
 window.qrShow = function () {
   var code = (document.getElementById("qr-code") && document.getElementById("qr-code").value || "").trim();
@@ -1913,37 +1919,38 @@ window.qrShow = function () {
   if (/^dd\d{8}$/i.test(c)) {
     var top = c.slice(0, 6);
     var bot = c.slice(6);
-    html = '<div class="card" style="background:#fff;color:#000;max-width:280px;margin:0 auto;text-align:center;padding:12px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px">'
-      + '<img src="' + qrApi(c, 72) + '" width="72" height="72" />'
-      + '<div style="font-size:0.65rem;font-weight:800">ДОМОВОЙ</div>'
-      + '<img src="' + qrApi(c, 72) + '" width="72" height="72" /></div>'
-      + '<div style="font-size:1.35rem;font-weight:900;margin-top:8px;line-height:1.05">' + top + '<br>' + bot + '</div></div>'
-      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Формат DD · зажми → сохранить в галерею</p>';
+    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;text-align:center;padding:20px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">'
+      + '<img src="' + dmApi(c, 6) + '" alt="dm" style="width:110px;height:110px;object-fit:contain" />'
+      + '<img src="' + LOGO_URL + '" alt="logo" style="width:88px;height:88px;object-fit:contain" />'
+      + '<img src="' + dmApi(c, 6) + '" alt="dm" style="width:110px;height:110px;object-fit:contain" /></div>'
+      + '<div style="font-size:2rem;font-weight:900;margin-top:16px;line-height:1.05;letter-spacing:0.02em">' + top + '<br>' + bot + '</div></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix · зажми этикетку → сохранить в галерею</p>';
   } else if (/^\d{11}$/.test(code)) {
-    html = '<div class="card" style="background:#fff;color:#000;max-width:320px;margin:0 auto;padding:12px">'
-      + '<div style="display:flex;justify-content:space-between"><div style="font-size:0.7rem;font-weight:800">ДОМОВОЙ</div>'
-      + '<img src="' + qrApi(code, 64) + '" width="64" height="64" /></div>'
-      + '<div style="font-size:1.4rem;font-weight:900;margin:6px 0">001066</div>'
-      + '<div style="font-size:1.1rem;font-style:italic;text-align:center">Поставка</div>'
-      + '<div style="font-size:1.25rem;font-weight:800;text-align:center;margin:6px 0">' + code + '</div>'
-      + '<img src="' + barcodeApi(code) + '" style="width:100%;height:48px;object-fit:contain" /></div>'
-      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Формат поставки</p>'
+    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;padding:20px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start">'
+      + '<div style="font-size:1rem;font-weight:800">ДОМОВОЙ</div>'
+      + '<img src="' + dmApi(code, 5) + '" alt="dm" style="width:96px;height:96px;object-fit:contain" /></div>'
+      + '<div style="font-size:2rem;font-weight:900;margin:12px 0 8px">001066</div>'
+      + '<div style="font-size:1.35rem;font-style:italic;text-align:center">Поставка</div>'
+      + '<div style="font-size:1.5rem;font-weight:800;text-align:center;margin:10px 0;letter-spacing:0.04em">' + code + '</div>'
+      + '<img src="' + barcodeApi(code) + '" alt="barcode" style="width:100%;height:64px;object-fit:contain" /></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix + штрихкод</p>'
       + '<label>Код склада</label><input id="ship-wh" value="001066" style="max-width:160px" />'
       + '<button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="qrShowShip(\'' + code + '\')">Обновить склад</button>';
   } else if (/^sumka\d{5}$/i.test(c)) {
-    html = '<div class="card" style="background:#fff;color:#000;max-width:320px;margin:0 auto;padding:12px;text-align:center">'
-      + '<div style="font-size:1.35rem;font-weight:900;margin-bottom:8px">' + c + '</div>'
-      + '<img src="' + barcodeApi(c) + '" style="width:100%;height:52px;object-fit:contain" />'
-      + '<div style="display:flex;justify-content:center;gap:8px;margin-top:10px">'
-      + '<img src="' + qrApi(c, 70) + '" width="70" height="70" />'
-      + '<img src="' + qrApi(c, 70) + '" width="70" height="70" />'
-      + '<img src="' + qrApi(c, 70) + '" width="70" height="70" /></div></div>'
-      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Формат сумки · сохрани в галерею</p>';
+    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;padding:20px;text-align:center">'
+      + '<div style="font-size:1.75rem;font-weight:900;margin-bottom:12px">' + c + '</div>'
+      + '<img src="' + barcodeApi(c) + '" style="width:100%;height:64px;object-fit:contain" />'
+      + '<div style="display:flex;justify-content:center;gap:12px;margin-top:14px">'
+      + '<img src="' + qrApi(c, 100) + '" width="100" height="100" />'
+      + '<img src="' + qrApi(c, 100) + '" width="100" height="100" />'
+      + '<img src="' + qrApi(c, 100) + '" width="100" height="100" /></div></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Сумка · сохрани в галерею</p>';
   } else {
-    html = '<div class="card" style="text-align:center">'
-      + '<img src="' + qrApi(code, 280) + '" width="280" height="280" style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />'
-      + '<div style="font-size:1.15rem;font-weight:700;margin-top:1rem">' + code + '</div>'
+    html = '<div class="card" style="text-align:center;max-width:360px;margin:0 auto">'
+      + '<img src="' + qrApi(code, 300) + '" width="300" height="300" style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />'
+      + '<div style="font-size:1.2rem;font-weight:700;margin-top:1rem">' + code + '</div>'
       + '<p style="color:var(--muted);font-size:0.85rem;margin-top:0.5rem">Обычный QR · зажми → сохранить</p></div>';
   }
   document.getElementById("qr-out").innerHTML = html;
@@ -1952,14 +1959,15 @@ window.qrShow = function () {
 window.qrShowShip = function (code) {
   var wh = (document.getElementById("ship-wh") && document.getElementById("ship-wh").value || "001066").trim();
   document.getElementById("qr-out").innerHTML =
-    '<div class="card" style="background:#fff;color:#000;max-width:320px;margin:0 auto;padding:12px">'
-    + '<div style="display:flex;justify-content:space-between"><div style="font-size:0.7rem;font-weight:800">ДОМОВОЙ</div>'
-    + '<img src="' + qrApi(code, 64) + '" width="64" height="64" /></div>'
-    + '<div style="font-size:1.4rem;font-weight:900;margin:6px 0">' + wh + '</div>'
-    + '<div style="font-size:1.1rem;font-style:italic;text-align:center">Поставка</div>'
-    + '<div style="font-size:1.25rem;font-weight:800;text-align:center;margin:6px 0">' + code + '</div>'
-    + '<img src="' + barcodeApi(code) + '" style="width:100%;height:48px;object-fit:contain" /></div>'
-    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми → сохранить в фото</p>';
+    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;padding:20px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start">'
+    + '<div style="font-size:1rem;font-weight:800">ДОМОВОЙ</div>'
+    + '<img src="' + dmApi(code, 5) + '" style="width:96px;height:96px;object-fit:contain" /></div>'
+    + '<div style="font-size:2rem;font-weight:900;margin:12px 0 8px">' + wh + '</div>'
+    + '<div style="font-size:1.35rem;font-style:italic;text-align:center">Поставка</div>'
+    + '<div style="font-size:1.5rem;font-weight:800;text-align:center;margin:10px 0">' + code + '</div>'
+    + '<img src="' + barcodeApi(code) + '" style="width:100%;height:64px;object-fit:contain" /></div>'
+    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми → сохранить</p>';
 };
 
 

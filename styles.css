@@ -265,3 +265,40 @@ input, textarea, select {
 }
 #toast { pointer-events: none; }
 
+
+/* layout fix ipad */
+html, body {
+  width: 100%;
+  min-height: 100%;
+  background: var(--bg, #0c1210);
+  overflow-x: hidden;
+}
+.screen {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+#screen-app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+}
+.content {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  flex: 1;
+}
+.label-sheet {
+  box-sizing: border-box;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+@media (max-width: 600px) {
+  .stat-grid { grid-template-columns: 1fr; }
+}
