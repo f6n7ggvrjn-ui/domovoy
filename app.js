@@ -411,10 +411,11 @@ async function renderOrderHistory() {
       <thead><tr><th>Заказ</th><th>Адрес</th><th>Сумма</th><th>Статус</th><th>Завершён</th></tr></thead>
       <tbody>${orders.map(o => `
         <tr>
-          <td>${o.id}${o.bag_id ? "<br><small>"+o.bag_id+"</small>" : ""}</td>
-          <td>${o.address || ""}${o.is_late ? "<br><small style=color:var(--danger)>опоздание</small>" : ""}</td>
-          <td>${o.status_label}</td>
-          <td>${fmtOrderTime(o.completed_at)}</td>
+          <td><strong>${o.id}</strong>${o.bag_id ? "<br><small style=\"color:var(--muted)\">"+o.bag_id+"</small>" : ""}</td>
+          <td>${o.address || "—"}${o.is_late ? "<br><small style=\"color:var(--danger)\">опоздание</small>" : ""}</td>
+          <td>${o.payment_amount != null ? Number(o.payment_amount).toLocaleString("ru-RU") + " ₽" : "—"}</td>
+          <td>${o.status_label || o.status || "—"}</td>
+          <td>${fmtOrderTime(o.completed_at) || "—"}</td>
         </tr>`).join("")}
       </tbody></table></div>` : "<p style='color:var(--muted)'>Нет завершённых заказов</p>"}`;
 }
