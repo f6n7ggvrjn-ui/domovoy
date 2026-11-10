@@ -2,6 +2,7 @@ const API = "/api";
 let token = sessionStorage.getItem("dv_token");
 let user = JSON.parse(sessionStorage.getItem("dv_user") || "null");
 let page = "home";
+window.page = page;
 let warehouseCode = sessionStorage.getItem("dv_wh") || "001066";
 function setWarehouse(code) {
   warehouseCode = code;
@@ -187,12 +188,14 @@ function navItems() {
   ];
 }
 
+window.go = function(p) { page = p; window.page = p; render(); };
 function render() {
+  window.page = page;
   document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role}`;
   const nav = document.getElementById("nav");
   const items = navItems();
   // подстраницы логистики/склада не в меню — не сбрасывать на главную
-  const subPages = ["logSend", "logForm", "logReceive", "logTrack", "logHistory", "whpick", "settings", "qr", "assemble", "issue", "unpack", "receive", "returnbag", "cells", "bags", "board", "eans", "points"];
+  const subPages = ["logSend", "logForm", "logReceive", "logTrack", "logHistory", "whpick", "settings", "qr", "assemble", "issue", "unpack", "receive", "returnbag", "cells", "bags", "board", "eans", "points", "mgrRating", "exRating", "orderHistory", "profile", "crmReport", "fines", "cabinet"];
   if (!items.find(i => i[0] === page) && !subPages.includes(page)) page = items[0][0];
   const logisticsSubs = ["logSend", "logForm", "logReceive", "logTrack", "logHistory"];
   nav.innerHTML = items.map(([id, label]) => {
@@ -270,7 +273,7 @@ function afterRender() {
 async function renderLookup() {
   return `
     <div class="page-h"><h1>Информация по объекту</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div class="scan-box">
       <div>Отсканируйте любой код</div>
       <input id="lookup-code" placeholder="dd… / sumka… / DY… / us… / EAN / ORD…"
@@ -412,12 +415,12 @@ async function renderHome() {
           <div class="stat-card">
             <div class="label">Менеджеры</div>
             <div class="value">${d.managers_active || 0}</div>
-            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='mgrRating';render()">Рейтинг менеджеров</button>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="go('mgrRating')">Рейтинг менеджеров</button>
           </div>
           <div class="stat-card">
             <div class="label">Исполнители</div>
             <div class="value">${d.executors_active || 0}</div>
-            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='exRating';render()">Рейтинг исполнителей</button>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="go('exRating')">Рейтинг исполнителей</button>
           </div>
         </div>
       </div>
@@ -443,7 +446,7 @@ async function renderHome() {
           <div class="stat-card">
             <div class="label">Завершённые</div>
             <div class="value">${d.orders_done || 0}</div>
-            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="page='orderHistory';render()">История</button>
+            <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="go('orderHistory')">История</button>
           </div>
         </div>
       </div>
@@ -531,7 +534,7 @@ async function renderAssemble() {
   const waiting = board.filter(b => ["awaiting_assembly", "assembling", "assembling_late"].includes(b.status));
   return `
     <div class="page-h"><h1>Сборка</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div id="asm-area">
       <p style="color:var(--muted);margin-bottom:0.75rem">Сумка должна быть готова за 30 мин до времени заказа. После дедлайна — опоздание</p>
       ${waiting.map(o => `
@@ -630,7 +633,7 @@ let iss = {};
 async function renderIssue() {
   return `
     <div class="page-h"><h1>Выдача</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div id="iss-area">
       <div class="scan-box">
         <div>1. QR исполнителя (usXXXXXX)</div>
@@ -664,7 +667,7 @@ async function renderUnpack() {
   unp = {};
   return `
     <div class="page-h"><h1>Разбор сумки</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div id="unp-area">
       <div class="scan-box">
         <div>Отсканируйте сумку</div>
@@ -865,7 +868,7 @@ async function renderReceive() {
   rcv = { step: 1, ean: null, eqId: null, name: null };
   return `
     <div class="page-h"><h1>Приёмка</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div id="rcv-area">
       <div class="scan-box">
         <div>1. Отсканируйте EAN</div>
@@ -1435,7 +1438,7 @@ window.tpDel = async (code) => {
 async function renderReturnBag() {
   return `
     <div class="page-h"><h1>Возврат сумки</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div class="scan-box">
       <div>Сканируйте сумку</div>
       <input id="ret-bag" placeholder="sumka14024" onkeydown="if(event.key==='Enter')doReturnBag()" />
@@ -1454,7 +1457,7 @@ window.doReturnBag = async () => {
 async function renderWhPick() {
   return `
     <div class="page-h"><h1>Выбор склада</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div class="scan-box">
       <div>Отсканируйте код склада (6 цифр)</div>
       <input id="wh-scan" placeholder="001066" value="${warehouseCode}"
@@ -1584,7 +1587,7 @@ async function renderLogistics() {
   if (!confirmed) {
     return `
       <div class="page-h"><h1>Логистика</h1>
-        <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+        <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
       <div class="scan-box">
         <div>Отсканируйте код склада (6 цифр)</div>
         <input id="log-wh" placeholder="001066"
@@ -1831,7 +1834,7 @@ window.logViz = async (id) => {
 async function renderSettings() {
   return `
     <div class="page-h"><h1>Настройки</h1>
-      <button class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     <div class="card">
       <div class="card-title">Справочники</div>
       <button class="btn btn-ghost btn-block" onclick="page='eans';render()">EAN</button>
@@ -1886,12 +1889,13 @@ window.downloadBackup = async () => {
 
 
 
+
 async function renderQrTool() {
   return `
     <div class="page-h"><h1>Печать ШК</h1></div>
     <div class="card">
       <label>Код</label>
-      <input id="qr-code" placeholder="dd… / sumka… / 11 цифр / us… / DY…"
+      <input id="qr-code" placeholder="dd… / sumka… / 11 цифр поставки / us…"
         onkeydown="if(event.key==='Enter')qrShow()" />
       <button type="button" class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="qrShow()">Сформировать</button>
     </div>
@@ -1909,7 +1913,6 @@ function qrApi(data, size) {
 function barcodeApi(data) {
   return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=3&height=14&includetext=false";
 }
-var LOGO_URL = "/logo-domovoy.jpg";
 
 window.qrShow = function () {
   var code = (document.getElementById("qr-code") && document.getElementById("qr-code").value || "").trim();
@@ -1921,23 +1924,18 @@ window.qrShow = function () {
     var bot = c.slice(6);
     html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;text-align:center;padding:20px">'
       + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">'
-      + '<img src="' + dmApi(c, 6) + '" alt="dm" style="width:110px;height:110px;object-fit:contain" />'
-      + '<img src="' + LOGO_URL + '" alt="logo" style="width:88px;height:88px;object-fit:contain" />'
-      + '<img src="' + dmApi(c, 6) + '" alt="dm" style="width:110px;height:110px;object-fit:contain" /></div>'
-      + '<div style="font-size:2rem;font-weight:900;margin-top:16px;line-height:1.05;letter-spacing:0.02em">' + top + '<br>' + bot + '</div></div>'
-      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix · зажми этикетку → сохранить в галерею</p>';
+      + '<img src="' + dmApi(c, 6) + '" style="width:110px;height:110px;object-fit:contain" />'
+      + '<div style="font-size:0.95rem;font-weight:800;letter-spacing:0.04em">ДОМОВОЙ</div>'
+      + '<img src="' + dmApi(c, 6) + '" style="width:110px;height:110px;object-fit:contain" /></div>'
+      + '<div style="font-size:2rem;font-weight:900;margin-top:16px;line-height:1.05">' + top + '<br>' + bot + '</div></div>'
+      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix · зажми → сохранить</p>';
   } else if (/^\d{11}$/.test(code)) {
-    html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;padding:20px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:flex-start">'
-      + '<div style="font-size:1rem;font-weight:800">ДОМОВОЙ</div>'
-      + '<img src="' + dmApi(code, 5) + '" alt="dm" style="width:96px;height:96px;object-fit:contain" /></div>'
-      + '<div style="font-size:2rem;font-weight:900;margin:12px 0 8px">001066</div>'
-      + '<div style="font-size:1.35rem;font-style:italic;text-align:center">Поставка</div>'
-      + '<div style="font-size:1.5rem;font-weight:800;text-align:center;margin:10px 0;letter-spacing:0.04em">' + code + '</div>'
-      + '<img src="' + barcodeApi(code) + '" alt="barcode" style="width:100%;height:64px;object-fit:contain" /></div>'
-      + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix + штрихкод</p>'
-      + '<label>Код склада</label><input id="ship-wh" value="001066" style="max-width:160px" />'
-      + '<button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="qrShowShip(\'' + code + '\')">Обновить склад</button>';
+    html = '<div class="card" style="max-width:440px;margin:0 auto">'
+      + '<label>Склад-отправитель</label><input id="ship-from" value="001066" />'
+      + '<label>Склад-получатель</label><input id="ship-to" value="001067" />'
+      + '<button type="button" class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="qrShowShip(\'' + code + '\')">Показать этикетку</button></div>'
+      + '<div id="ship-label-out" style="margin-top:1rem"></div>';
+    setTimeout(function(){ window.qrShowShip(code); }, 30);
   } else if (/^sumka\d{5}$/i.test(c)) {
     html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;padding:20px;text-align:center">'
       + '<div style="font-size:1.75rem;font-weight:900;margin-bottom:12px">' + c + '</div>'
@@ -1950,24 +1948,29 @@ window.qrShow = function () {
   } else {
     html = '<div class="card" style="text-align:center;max-width:360px;margin:0 auto">'
       + '<img src="' + qrApi(code, 300) + '" width="300" height="300" style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />'
-      + '<div style="font-size:1.2rem;font-weight:700;margin-top:1rem">' + code + '</div>'
-      + '<p style="color:var(--muted);font-size:0.85rem;margin-top:0.5rem">Обычный QR · зажми → сохранить</p></div>';
+      + '<div style="font-size:1.2rem;font-weight:700;margin-top:1rem">' + code + '</div></div>';
   }
   document.getElementById("qr-out").innerHTML = html;
 };
 
 window.qrShowShip = function (code) {
-  var wh = (document.getElementById("ship-wh") && document.getElementById("ship-wh").value || "001066").trim();
-  document.getElementById("qr-out").innerHTML =
-    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:420px;margin:0 auto;padding:20px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:flex-start">'
-    + '<div style="font-size:1rem;font-weight:800">ДОМОВОЙ</div>'
-    + '<img src="' + dmApi(code, 5) + '" style="width:96px;height:96px;object-fit:contain" /></div>'
-    + '<div style="font-size:2rem;font-weight:900;margin:12px 0 8px">' + wh + '</div>'
-    + '<div style="font-size:1.35rem;font-style:italic;text-align:center">Поставка</div>'
-    + '<div style="font-size:1.5rem;font-weight:800;text-align:center;margin:10px 0">' + code + '</div>'
+  var from = (document.getElementById("ship-from") && document.getElementById("ship-from").value || "001066").trim();
+  var to = (document.getElementById("ship-to") && document.getElementById("ship-to").value || "").trim();
+  var box = document.getElementById("ship-label-out") || document.getElementById("qr-out");
+  box.innerHTML =
+    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:440px;margin:0 auto;padding:20px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px">'
+    + '<img src="' + dmApi(code, 5) + '" style="width:92px;height:92px;object-fit:contain" />'
+    + '<div style="font-size:1rem;font-weight:800;letter-spacing:0.06em">ДОМОВОЙ</div>'
+    + '<img src="' + dmApi(code, 5) + '" style="width:92px;height:92px;object-fit:contain" /></div>'
+    + '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin:14px 0">'
+    + '<div style="font-size:1.6rem;font-weight:900">' + from + '</div>'
+    + '<div style="font-size:1.8rem;font-weight:900">→</div>'
+    + '<div style="font-size:1.6rem;font-weight:900">' + (to || "—") + '</div></div>'
+    + '<div style="font-size:1.25rem;font-style:italic;text-align:center;margin:8px 0">Поставка</div>'
+    + '<div style="font-size:1.45rem;font-weight:800;text-align:center;margin:10px 0;letter-spacing:0.04em">' + code + '</div>'
     + '<img src="' + barcodeApi(code) + '" style="width:100%;height:64px;object-fit:contain" /></div>'
-    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми → сохранить</p>';
+    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Data Matrix слева и справа · зажми → сохранить</p>';
 };
 
 
@@ -2048,7 +2051,7 @@ async function renderCabinet() {
         <div class="card-title" style="margin-bottom:0.5rem">Мои разделы</div>
         <ul class="menu-list">
           <li><button type="button" onclick="page='orders';render()">Создать заказ</button></li>
-          <li><button type="button" onclick="page='orderHistory';render()">История заказов</button></li>
+          <li><button type="button" onclick="go('orderHistory')">История заказов</button></li>
           <li><button type="button" onclick="page='fines';render()">Штрафы${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
           <li><button type="button" onclick="page='profile';render()">Профиль</button></li>
         </ul>
@@ -2084,8 +2087,8 @@ async function renderCabinet() {
     <div class="card">
       <div class="card-title" style="margin-bottom:0.5rem">Мои разделы</div>
       <ul class="menu-list">
-        <li><button type="button" onclick="page='home';render()">Мои заказы</button></li>
-        <li><button type="button" onclick="page='orderHistory';render()">История заказов</button></li>
+        <li><button type="button" onclick="go('home')">Мои заказы</button></li>
+        <li><button type="button" onclick="go('orderHistory')">История заказов</button></li>
         <li><button type="button" onclick="page='fines';render()">Штрафы${d.open_fines ? " · " + d.open_fines + " ₽" : ""}</button></li>
         <li><button type="button" onclick="page='profile';render()">Профиль</button></li>
       </ul>
@@ -2179,7 +2182,7 @@ async function renderMgrRating() {
   const rows = d.manager_rating || [];
   return `
     <div class="page-h"><h1>Рейтинг менеджеров</h1>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     ${rows.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Менеджер</th><th>Заказы</th><th>Выполнено</th><th>Комиссия</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
@@ -2198,7 +2201,7 @@ async function renderExRating() {
   const rows = d.executor_rating || [];
   return `
     <div class="page-h"><h1>Рейтинг исполнителей</h1>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="page='home';render()">Назад</button></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="go('home')">Назад</button></div>
     ${rows.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Исполнитель</th><th>Активные</th><th>Выполнено</th><th>Заработано</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
