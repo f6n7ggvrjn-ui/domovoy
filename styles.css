@@ -336,3 +336,28 @@ body {
   height: auto;
   -webkit-touch-callout: default;
 }
+
+#qr-code, #ship-from, #ship-to {
+  font-size: 16px !important;
+  min-height: 48px;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  touch-action: manipulation;
+}
+
+#screen-login, #screen-login * {
+  pointer-events: auto !important;
+}
+#screen-login input {
+  font-size: 16px !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  opacity: 1 !important;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#screen-login input:disabled,
+#screen-login input[readonly] {
+  /* if accidentally set — still look editable */
+  opacity: 1 !important;
+}

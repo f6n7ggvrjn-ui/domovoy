@@ -191,15 +191,13 @@ function navItems() {
 window.go = function(p) { page = p; window.page = p; render(); };
 function recoverLayout() {
   try {
-    document.documentElement.style.zoom = "1";
-    document.body.style.zoom = "1";
+    // не трогаем zoom на iOS — ломает ввод и клавиатуру
     document.body.style.transform = "none";
     document.documentElement.style.transform = "none";
     var app = document.getElementById("screen-app");
     if (app) { app.style.transform = "none"; app.style.width = "100%"; }
     var c = document.getElementById("content");
     if (c) { c.style.transform = "none"; c.style.width = "100%"; }
-    window.scrollTo(0, 0);
   } catch (_) {}
 }
 window.recoverLayout = recoverLayout;
@@ -2370,3 +2368,24 @@ window.addEventListener("pageshow", function () { recoverLayout(); });
 window.addEventListener("orientationchange", function () {
   setTimeout(recoverLayout, 200);
 });
+
+(function initLoginInputs() {
+  function unlock(el) {
+    if (!el) return;
+    el.removeAttribute("readonly");
+    el.removeAttribute("disabled");
+    el.style.pointerEvents = "auto";
+    el.style.fontSize = "16px";
+  }
+  function setup() {
+    unlock(document.getElementById("login-id"));
+    unlock(document.getElementById("login-pass"));
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setup);
+  } else {
+    setup();
+  }
+  setTimeout(setup, 300);
+  setTimeout(setup, 1000);
+})();
