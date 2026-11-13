@@ -2423,11 +2423,4 @@ window.loadTgStatus = async () => {
   }
 };
 
-document.addEventListener("visibilitychange", function () {
-  if (document.visibilityState === "visible") recoverLayout();
-});
-window.addEventListener("pageshow", function () { var a=document.getElementById("screen-app"); if(a&&a.classList.contains("active")) recoverLayout(); });
-window.addEventListener("orientationchange", function () {
-  setTimeout(recoverLayout, 200);
-});
 

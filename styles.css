@@ -353,25 +353,11 @@ body {
   user-select: text;
 }
 
-/* LOGIN FIX 20261113 */
-#screen-login input#login-id,
-#screen-login input#login-pass {
+
+/* login inputs — без хаков */
+#login-id, #login-pass {
   font-size: 16px !important;
-  -webkit-user-select: text !important;
-  user-select: text !important;
-  pointer-events: auto !important;
-  opacity: 1 !important;
-  background: #1e2e26 !important;
-  color: #e8f5e9 !important;
-  -webkit-text-fill-color: #e8f5e9;
-  position: relative;
-  z-index: 20;
-}
-#screen-login .login-card {
-  position: relative;
-  z-index: 10;
-  pointer-events: auto !important;
-}
-#screen-login label {
-  pointer-events: none;
+  -webkit-user-select: text;
+  user-select: text;
+  pointer-events: auto;
 }

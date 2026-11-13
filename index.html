@@ -12,10 +12,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <title>Домовой</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20261113login3" />
+  <link rel="stylesheet" href="styles.css?v=20261113in" />
 </head>
 <body>
   <div id="screen-login" class="screen active">
@@ -24,14 +21,14 @@
         <div class="brand-title">ДОМОВОЙ</div>
         <p class="brand-tagline">Склад · Сумки · Оборудование</p>
       </div>
-      <form id="login-form" autocomplete="on" method="post" action="#">
+      <form id="login-form" autocomplete="on">
         <label for="login-id">Учётная запись</label>
         <input id="login-id" name="username" type="text" placeholder="us000001"
           autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" />
         <label for="login-pass">Пароль</label>
         <input id="login-pass" name="password" type="password" placeholder="Пароль"
           autocomplete="current-password" />
-        <button type="submit" class="btn btn-primary btn-block" id="login-btn">Войти</button>
+        <button type="submit" class="btn btn-primary btn-block">Войти</button>
       </form>
       <div id="login-err" class="error hidden"></div>
     </div>
@@ -50,19 +47,16 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-
   <script>
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function (regs) {
-      regs.forEach(function (r) { r.unregister(); });
+    navigator.serviceWorker.getRegistrations().then(function (r) {
+      r.forEach(function (x) { x.unregister(); });
     });
   }
-  if (window.caches && caches.keys) {
-    caches.keys().then(function (keys) {
-      keys.forEach(function (k) { caches.delete(k); });
-    });
+  if (window.caches) {
+    caches.keys().then(function (k) { k.forEach(function (n) { caches.delete(n); }); });
   }
   </script>
-  <script src="app.js?v=20261113login3"></script>
+  <script src="app.js?v=20261113in"></script>
 </body>
 </html>
