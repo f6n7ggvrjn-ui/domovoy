@@ -1914,15 +1914,16 @@ window.downloadBackup = async () => {
 
 
 
+
 async function renderQrTool() {
   return `
     <div class="page-h"><h1>Печать ШК</h1></div>
     <div class="card">
       <label for="qr-code">Код</label>
       <input id="qr-code" name="qr-code" type="text" inputmode="text"
-        placeholder="dd… / sumka… / 11 цифр / us…"
+        placeholder="dd… / sumka… / us000001 / 11 цифр"
         autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-        style="font-size:16px;-webkit-user-select:text;user-select:text;"
+        style="font-size:16px"
         onkeydown="if(event.key==='Enter'){event.preventDefault();qrShow();}" />
       <button type="button" class="btn btn-primary btn-block" style="margin-top:0.75rem" onclick="qrShow()">Сформировать</button>
     </div>
@@ -1941,13 +1942,13 @@ function barcodeApi(data) {
   return "https://bwipjs-api.metafloor.com/?bcid=code128&text=" + encodeURIComponent(data) + "&scale=6&height=28&includetext=false";
 }
 
+
 window.qrShow = function () {
   var el = document.getElementById("qr-code");
   var code = (el && el.value || "").trim();
   if (!code) { toast("Введите код", true); return; }
   var c = code.toLowerCase();
   var html = "";
-  // DD — крупные Data Matrix (как 3 QR на сумке по ширине)
   if (/^dd\d{8}$/i.test(c)) {
     var top = c.slice(0, 6);
     var bot = c.slice(6);
@@ -1958,6 +1959,7 @@ window.qrShow = function () {
       + '<img src="' + dmApi(c, 5) + '" alt="dm" style="width:110px;height:110px;object-fit:contain" /></div>'
       + '<div style="font-size:2.15rem;font-weight:900;margin-top:18px;line-height:1.05">' + top + '<br>' + bot + '</div></div>'
       + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми этикетку → сохранить</p>';
+    document.getElementById("qr-out").innerHTML = html;
   } else if (/^\d{11}$/.test(code)) {
     html = '<div class="card" style="max-width:480px;margin:0 auto">'
       + '<label for="ship-from">Склад-отправитель</label>'
@@ -1966,7 +1968,8 @@ window.qrShow = function () {
       + '<input id="ship-to" value="001067" style="font-size:16px" inputmode="numeric" />'
       + '<button type="button" class="btn btn-accent btn-block" style="margin-top:0.75rem" onclick="qrShowShip(\'' + code + '\')">Показать этикетку</button></div>'
       + '<div id="ship-label-out" style="margin-top:1rem"></div>';
-    setTimeout(function(){ window.qrShowShip(code); }, 40);
+    document.getElementById("qr-out").innerHTML = html;
+    setTimeout(function () { window.qrShowShip(code); }, 40);
   } else if (/^sumka\d{5}$/i.test(c)) {
     html = '<div class="card label-sheet" style="background:#fff;color:#000;max-width:480px;margin:0 auto;padding:22px;text-align:center">'
       + '<div style="font-size:1.85rem;font-weight:900;margin-bottom:12px">' + c + '</div>'
@@ -1976,40 +1979,90 @@ window.qrShow = function () {
       + '<img src="' + qrApi(c, 120) + '" width="120" height="120" />'
       + '<img src="' + qrApi(c, 120) + '" width="120" height="120" /></div></div>'
       + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Сумка · сохрани в галерею</p>';
+    document.getElementById("qr-out").innerHTML = html;
+  } else if (/^us\d{6}$/i.test(c)) {
+    document.getElementById("qr-out").innerHTML = '<p style="text-align:center;color:var(--muted)">Загрузка…</p>';
+    window.qrShowUser(c);
   } else {
     html = '<div class="card" style="text-align:center;max-width:380px;margin:0 auto">'
       + '<img src="' + qrApi(code, 300) + '" width="300" height="300" style="background:#fff;border-radius:12px;padding:10px;margin:0 auto;display:block" />'
       + '<div style="font-size:1.2rem;font-weight:700;margin-top:1rem">' + code + '</div></div>';
+    document.getElementById("qr-out").innerHTML = html;
   }
-  document.getElementById("qr-out").innerHTML = html;
-  setTimeout(function(){ if (typeof recoverLayout === "function") recoverLayout(); }, 50);
+  setTimeout(function () { if (typeof recoverLayout === "function") recoverLayout(); }, 50);
+};
+
+window.qrShowUser = async function (uid) {
+  uid = String(uid || "").toLowerCase().trim();
+  var name = "";
+  try {
+    var list = await api("/employees");
+    var found = (list || []).find(function (e) { return e.id === uid; });
+    if (found) name = found.full_name || "";
+  } catch (e) {}
+  window._usLabelName = name;
+  window._usLabelPass = "";
+  window.qrShowUserRedraw(uid);
+};
+
+window.qrShowUserRedraw = function (uid) {
+  uid = String(uid || "").toLowerCase();
+  var nameEl = document.getElementById("us-label-name");
+  var passEl = document.getElementById("us-label-pass");
+  var name = nameEl ? nameEl.value.trim() : (window._usLabelName || "");
+  var pass = passEl ? passEl.value.trim() : (window._usLabelPass || "");
+  window._usLabelName = name;
+  window._usLabelPass = pass;
+  function esc(s) {
+    return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  var nameEsc = esc(name);
+  var passEsc = esc(pass);
+  var fioLine = nameEsc
+    ? ('ФИО: <span style="font-weight:800">' + nameEsc + "</span>")
+    : 'ФИО: <span style="border-bottom:1px solid #333;display:inline-block;min-width:12rem">&nbsp;</span>';
+  var passLine = passEsc
+    ? ("Пароль: <span style=\"font-weight:800\">" + passEsc + "</span>")
+    : 'Пароль: <span style="border-bottom:1px solid #333;display:inline-block;min-width:10rem">&nbsp;</span>';
+  document.getElementById("qr-out").innerHTML =
+    '<div class="card label-sheet" style="background:#fff;color:#000;max-width:380px;margin:0 auto;padding:28px 24px;text-align:left">'
+    + '<div style="font-size:1.35rem;font-weight:700;margin-bottom:0.85rem;line-height:1.45">' + fioLine + "</div>"
+    + '<div style="font-size:1.35rem;font-weight:700;margin-bottom:1.5rem;line-height:1.45">' + passLine + "</div>"
+    + '<div style="text-align:center">'
+    + '<img src="' + qrApi(uid, 320) + '" width="280" height="280" alt="QR" style="background:#fff;margin:0 auto;display:block" />'
+    + '<div style="font-size:1.75rem;font-weight:900;margin-top:1rem;letter-spacing:0.04em">' + uid + "</div>"
+    + "</div></div>"
+    + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Учётка · зажми белую часть → сохранить</p>'
+    + '<div class="card" style="margin-top:0.75rem;max-width:380px;margin-left:auto;margin-right:auto">'
+    + "<label>ФИО на этикетке</label>"
+    + '<input id="us-label-name" value="' + nameEsc + '" style="font-size:16px" />'
+    + '<label style="margin-top:0.5rem">Пароль на этикетке (необязательно)</label>'
+    + '<input id="us-label-pass" type="text" value="' + passEsc + '" placeholder="если нужно напечатать" style="font-size:16px" autocomplete="off" />'
+    + '<button type="button" class="btn btn-ghost btn-block" style="margin-top:0.75rem" onclick="qrShowUserRedraw(\'' + uid + '\')">Обновить этикетку</button>'
+    + "</div>";
+  setTimeout(function () { if (typeof recoverLayout === "function") recoverLayout(); }, 50);
 };
 
 window.qrShowShip = function (code) {
   var from = (document.getElementById("ship-from") && document.getElementById("ship-from").value || "001066").trim();
   var to = (document.getElementById("ship-to") && document.getElementById("ship-to").value || "").trim();
   var box = document.getElementById("ship-label-out") || document.getElementById("qr-out");
-  // Макет: DM | ДОМОВОЙ | DM → маршрут → «Поставка» → номер → крупный штрихкод
   box.innerHTML =
     '<div class="card label-sheet" style="background:#fff;color:#000;max-width:480px;margin:0 auto;padding:20px 18px 16px">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'
     + '<img src="' + dmApi(code, 5) + '" style="width:100px;height:100px;object-fit:contain" alt="dm" />'
     + '<div style="font-size:1rem;font-weight:800;letter-spacing:0.06em">ДОМОВОЙ</div>'
     + '<img src="' + dmApi(code, 5) + '" style="width:100px;height:100px;object-fit:contain" alt="dm" />'
-    + '</div>'
-    // зелёный: откуда → куда
+    + "</div>"
     + '<div style="text-align:center;margin-top:14px;font-size:1.55rem;font-weight:900;letter-spacing:0.02em">'
-    + from + ' → ' + (to || "—") + '</div>'
-    // жёлтый: Поставка
+    + from + " → " + (to || "—") + "</div>"
     + '<div style="text-align:center;margin-top:10px;font-size:1.25rem;font-style:italic">Поставка</div>'
-    // синий: номер (11 цифр)
-    + '<div style="text-align:center;margin-top:10px;font-size:1.55rem;font-weight:800;letter-spacing:0.06em">' + code + '</div>'
-    // красный: крупный линейный штрихкод
+    + '<div style="text-align:center;margin-top:10px;font-size:1.55rem;font-weight:800;letter-spacing:0.06em">' + code + "</div>"
     + '<div style="margin-top:14px;padding:8px 0 4px">'
     + '<img src="' + barcodeApi(code) + '" alt="barcode" style="width:100%;height:110px;object-fit:contain;object-position:center" />'
-    + '</div></div>'
+    + "</div></div>"
     + '<p style="text-align:center;color:var(--muted);font-size:0.85rem;margin-top:0.75rem">Зажми этикетку → сохранить</p>';
-  setTimeout(function(){ if (typeof recoverLayout === "function") recoverLayout(); }, 50);
+  setTimeout(function () { if (typeof recoverLayout === "function") recoverLayout(); }, 50);
 };
 
 
