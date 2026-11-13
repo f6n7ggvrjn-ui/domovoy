@@ -191,7 +191,8 @@ function navItems() {
 window.go = function(p) { page = p; window.page = p; render(); };
 function recoverLayout() {
   try {
-    // не трогаем zoom на iOS — ломает ввод и клавиатуру
+    var login = document.getElementById("screen-login");
+    if (login && login.classList.contains("active")) return;
     document.body.style.transform = "none";
     document.documentElement.style.transform = "none";
     var app = document.getElementById("screen-app");
@@ -2425,7 +2426,7 @@ window.loadTgStatus = async () => {
 document.addEventListener("visibilitychange", function () {
   if (document.visibilityState === "visible") recoverLayout();
 });
-window.addEventListener("pageshow", function () { recoverLayout(); });
+window.addEventListener("pageshow", function () { var a=document.getElementById("screen-app"); if(a&&a.classList.contains("active")) recoverLayout(); });
 window.addEventListener("orientationchange", function () {
   setTimeout(recoverLayout, 200);
 });

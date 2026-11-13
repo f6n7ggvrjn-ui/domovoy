@@ -11,31 +11,29 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-
   <title>Домовой</title>
-      <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="styles.css?v=20261111login2" />
+  <link rel="stylesheet" href="styles.css?v=20261113login3" />
 </head>
-<body style="padding:0;margin:0;">
+<body>
   <div id="screen-login" class="screen active">
     <div class="login-card">
       <div class="brand">
         <div class="brand-title">ДОМОВОЙ</div>
         <p class="brand-tagline">Склад · Сумки · Оборудование</p>
       </div>
-      <form id="login-form" autocomplete="on">
+      <form id="login-form" autocomplete="on" method="post" action="#">
         <label for="login-id">Учётная запись</label>
         <input id="login-id" name="username" type="text" placeholder="us000001"
           autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" />
         <label for="login-pass">Пароль</label>
         <input id="login-pass" name="password" type="password" placeholder="Пароль"
           autocomplete="current-password" />
-        <button type="submit" class="btn btn-primary btn-block">Войти</button>
+        <button type="submit" class="btn btn-primary btn-block" id="login-btn">Войти</button>
       </form>
       <div id="login-err" class="error hidden"></div>
-      <p id="login-hint" style="margin-top:0.75rem;font-size:0.75rem;color:#86a89a;text-align:center"></p>
     </div>
   </div>
 
@@ -44,7 +42,7 @@
       <div class="header-brand"><span class="header-title">Домовой</span></div>
       <div class="header-right">
         <span id="user-label"></span>
-        <button id="btn-logout" class="btn btn-ghost btn-sm">Выйти</button>
+        <button type="button" id="btn-logout" class="btn btn-ghost btn-sm">Выйти</button>
       </div>
     </header>
     <nav id="nav" class="nav"></nav>
@@ -52,26 +50,19 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  
-<script>
-/* На iPad PWA старый service worker ломает ввод и кэш — сбрасываем */
-if ("serviceWorker" in navigator) {
-  // отключаем SW: на iPad PWA он ломает ввод в полях
-  navigator.serviceWorker.getRegistrations().then(function (regs) {
-    regs.forEach(function (r) { r.unregister(); });
-  });
-  if (window.caches) {
+
+  <script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      regs.forEach(function (r) { r.unregister(); });
+    });
+  }
+  if (window.caches && caches.keys) {
     caches.keys().then(function (keys) {
       keys.forEach(function (k) { caches.delete(k); });
     });
   }
-}
-if (window.caches && caches.keys) {
-  caches.keys().then(function (keys) {
-    keys.forEach(function (k) { caches.delete(k); });
-  });
-}
-</script>
-<script src="app.js?v=20261113us2"></script>
+  </script>
+  <script src="app.js?v=20261113login3"></script>
 </body>
 </html>
