@@ -169,11 +169,17 @@ function navItems() {
       ["settings", "Настройки"], ["qr", "Печать ШК"], ["profile", "Профиль"],
     ];
   }
-  if (user.role === "supervisor" || user.role === "warehouse") {
+  if (user.role === "crm_lead") {
     return [
-      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"],
-      ["logistics", "Логистика"], ["board", "Очередь"],
-      ["shift", "Смена"], ["missing", "Пропажи"], ["profile", "Профиль"],
+      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
+      ["shift", "Смена"], ["profile", "Профиль"],
+    ];
+  }
+  if (user.role === "prod_lead" || user.role === "supervisor" || user.role === "warehouse") {
+    return [
+      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
+      ["shift", "Смена"], ["logistics", "Логистика"], ["board", "Очередь"],
+      ["missing", "Пропажи"], ["profile", "Профиль"],
     ];
   }
   if (user.role === "order_manager") {
@@ -409,7 +415,7 @@ async function renderOrderHistory() {
       <p style="color:var(--muted);font-size:0.85rem">${isAdmin ? "Завершённые за 3 месяца" : "Завершённые в текущем месяце"}</p>
     </div>
     ${orders.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Заказ</th><th>Адрес</th><th>Сумма</th><th>Статус</th><th>Завершён</th></tr></thead>
+      <thead><tr><th>Заказ</th><th>Адрес</th><th>Сумма</th><th>Статус</th><th>Завершён</th><th></th></tr></thead>
       <tbody>${orders.map(o => `
         <tr>
           <td><strong>${o.id}</strong>${o.bag_id ? "<br><small style=\"color:var(--muted)\">"+o.bag_id+"</small>" : ""}</td>
@@ -417,6 +423,7 @@ async function renderOrderHistory() {
           <td>${o.payment_amount != null ? Number(o.payment_amount).toLocaleString("ru-RU") + " ₽" : "—"}</td>
           <td>${o.status_label || o.status || "—"}</td>
           <td>${fmtOrderTime(o.completed_at) || "—"}</td>
+          <td><button type="button" class="btn btn-ghost btn-sm" onclick="showOrderRoute('${o.id}')">Маршрут</button></td>
         </tr>`).join("")}
       </tbody></table></div>` : "<p style='color:var(--muted)'>Нет завершённых заказов</p>"}`;
 }
@@ -497,9 +504,107 @@ async function renderHome() {
         </div>
       </div>`;
   }
-  if (user.role === "supervisor" || user.role === "warehouse") {
+  
+  if (user.role === "crm_lead") {
+    let d = { managers_active: 0, manager_rating: [], orders_active: 0, active_orders: [] };
+    let doneToday = [];
+    try { d = await api("/admin/dashboard"); } catch (e) {}
+    try { doneToday = await api("/orders/done-today"); } catch (e) { doneToday = []; }
     return `
-      <div class="page-h"><h1>Склад</h1></div>
+      <div class="page-h"><h1>Участок CRM</h1><span style="color:var(--muted)">${new Date().toLocaleDateString("ru-RU")}</span></div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="label">Менеджеры на смене</div>
+          <div class="value">${d.managers_active || 0}</div>
+          <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="go('mgrRating')">Рейтинг менеджеров</button>
+        </div>
+        <div class="stat-card">
+          <div class="label">Активные заказы</div>
+          <div class="value">${d.orders_active || 0}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Выполнено сегодня</div>
+          <div class="value">${doneToday.length}</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <div class="card-title">Активные заказы</div>
+        ${(d.active_orders && d.active_orders.length) ? `<div class="table-wrap"><table>
+          <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Cut-off</th></tr></thead>
+          <tbody>${d.active_orders.map(o => `<tr>
+            <td>${o.id}</td><td>${o.address || ""}</td><td>${o.status_label || o.status}</td>
+            <td class="cutoff">${fmtCutoff(o)}</td>
+          </tr>`).join("")}</tbody></table></div>` : `<p style="color:var(--muted)">Нет активных</p>`}
+      </div>
+      <div class="card">
+        <div class="card-title">Выполненные сегодня</div>
+        ${doneToday.length ? `<div class="table-wrap"><table>
+          <thead><tr><th>Заказ</th><th>Адрес</th><th>Исполнитель</th></tr></thead>
+          <tbody>${doneToday.map(o => `<tr>
+            <td>${o.id}</td><td>${o.address || ""}</td>
+            <td>${o.executor_name || "—"} ${o.executor_id ? "("+o.executor_id+")" : ""}</td>
+          </tr>`).join("")}</tbody></table></div>` : `<p style="color:var(--muted)">Пока нет</p>`}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.75rem">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="go('orderHistory')">История</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="go('lookup')">Объект</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="go('shift')">Смена</button>
+      </div>`;
+  }
+
+  
+  if (user.role === "crm_lead") {
+    let d = { managers_active: 0, orders_active: 0, active_orders: [] };
+    let doneToday = [];
+    try { d = await api("/admin/dashboard"); } catch (e) {}
+    try { doneToday = await api("/orders/done-today"); } catch (e) { doneToday = []; }
+    return `
+      <div class="page-h"><h1>Участок CRM</h1>
+        <span style="color:var(--muted);font-size:0.85rem">${new Date().toLocaleDateString("ru-RU")}</span>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="label">Менеджеры на смене</div>
+          <div class="value">${d.managers_active || 0}</div>
+          <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="go('mgrRating')">Рейтинг менеджеров</button>
+        </div>
+        <div class="stat-card">
+          <div class="label">Активные заказы</div>
+          <div class="value">${d.orders_active || 0}</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Выполнено сегодня</div>
+          <div class="value">${(doneToday && doneToday.length) || 0}</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <div class="card-title">Активные заказы</div>
+        ${(d.active_orders && d.active_orders.length) ? `<div class="table-wrap"><table>
+          <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Cut-off</th></tr></thead>
+          <tbody>${d.active_orders.map(o => `<tr>
+            <td>${o.id}</td><td>${o.address || ""}</td><td>${o.status_label || o.status}</td>
+            <td class="cutoff">${fmtCutoff(o)}</td>
+          </tr>`).join("")}</tbody></table></div>` : `<p style="color:var(--muted)">Нет активных</p>`}
+      </div>
+      <div class="card">
+        <div class="card-title">Выполненные сегодня</div>
+        ${(doneToday && doneToday.length) ? `<div class="table-wrap"><table>
+          <thead><tr><th>Заказ</th><th>Адрес</th><th>Исполнитель</th></tr></thead>
+          <tbody>${doneToday.map(o => `<tr>
+            <td>${o.id}</td><td>${o.address || ""}</td>
+            <td>${o.executor_name || "—"} ${o.executor_id ? "("+o.executor_id+")" : ""}</td>
+          </tr>`).join("")}</tbody></table></div>` : `<p style="color:var(--muted)">Пока нет</p>`}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.75rem">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="go('orderHistory')">История</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="go('lookup')">Объект</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="go('shift')">Смена</button>
+      </div>`;
+  }
+
+  if (user.role === "prod_lead" || user.role === "supervisor" || user.role === "warehouse") {
+    return `
+      <div class="page-h"><h1>Участок производства</h1></div>
       <div id="signal-banner" class="card" style="border-color:var(--warning);color:var(--warning);display:none"></div>
       <div class="tsd-grid">
         <button class="btn btn-primary btn-lg" onclick="page='assemble';render()">СБОРКА</button>
@@ -570,7 +675,7 @@ async function renderAssemble() {
           <div style="margin-top:0.4rem">${o.address || ""}</div>
           ${o.object_info ? `<div style="font-size:0.85rem;color:var(--muted)">${o.object_info}</div>` : ""}
           <div class="cutoff ${o.cutoff_left != null && o.cutoff_left < 0 ? "urgent" : ""}">
-            Готовность: ${o.cutoff_left != null ? (o.cutoff_left < 0 ? "опоздание " + Math.abs(o.cutoff_left) + " мин" : "осталось " + o.cutoff_left + " мин") : "—"}${o.scheduled_at ? " · заказ " + fmtOrderTime(o.scheduled_at) : ""}
+            Cut-off: ${o.cutoff_left != null ? (o.cutoff_left < 0 ? "опоздание " + Math.abs(o.cutoff_left) + " мин" : "осталось " + o.cutoff_left + " мин") : "—"}${o.scheduled_at ? " · заказ " + fmtOrderTime(o.scheduled_at) : ""}
           </div>
         </div>`).join("") || "<p style='color:var(--muted)'>Нет заказов</p>"}
     </div>`;
@@ -965,7 +1070,7 @@ async function renderBoard() {
   return `
     <div class="page-h"><h1>Очередь / статусы</h1></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Время</th><th>Заказ</th><th>Адрес</th><th>Сумма</th><th>Статус</th><th>Сумка</th><th>Готовность</th></tr></thead>
+      <thead><tr><th>Время</th><th>Заказ</th><th>Адрес</th><th>Сумма</th><th>Статус</th><th>Сумка</th><th>Cut-off</th></tr></thead>
       <tbody>${rows.map(r => `
         <tr>
           <td>${r.order_id || r.id}</td>
@@ -1024,7 +1129,7 @@ async function renderOrdersAdmin() {
   let orders = [];
   try { orders = await api("/orders?scope=active"); }
   catch (e) { return `<div class="page-h"><h1>Заказы</h1></div><div class="error">${e.message}</div>`; }
-  const canAssign = user.role === "admin" || user.role === "supervisor" || user.role === "warehouse";
+  const canAssign = user.role === "admin" || user.role === "prod_lead" || user.role === "supervisor";
   let emps = [];
   if (canAssign) {
     try { emps = await api("/shift/executors?warehouse_code=" + encodeURIComponent(warehouseCode)); } catch(_) {
@@ -1049,7 +1154,7 @@ async function renderOrdersAdmin() {
       <button class="btn btn-primary btn-block" onclick="ordCreate(true)">Создать и на сборку</button>
     </div>
     <div class="table-wrap" style="margin-top:1rem"><table>
-      <thead><tr><th>Время</th><th>Заказ / адрес</th><th>Сумка</th><th>Статус</th><th>Готовность</th><th>Исполнитель</th><th></th></tr></thead>
+      <thead><tr><th>Время</th><th>Заказ / адрес</th><th>Сумка</th><th>Статус</th><th>Cut-off</th><th>Исполнитель</th><th></th></tr></thead>
       <tbody>${orders.map(o => `
         <tr>
           <td style="white-space:nowrap"><b>${fmtOrderTime(o.scheduled_at)}</b></td>
@@ -1062,7 +1167,7 @@ async function renderOrdersAdmin() {
           <td style="white-space:nowrap">
             ${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
             ${o.status === "completion_pending" && user.role === "admin" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
-            ${canAssign && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}
+            ${canAssign && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}${(user.role==="admin"||user.role==="crm_lead") && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}${user.role==="admin"||user.role==="prod_lead"||user.role==="supervisor" ? `<button class="btn btn-ghost btn-sm" onclick="ordConfirmComplete('${o.id}')">Подтвердить</button>` : ""}
             ${user.role === "admin" && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}
           </td>
         </tr>`).join("")}
@@ -1135,7 +1240,8 @@ async function renderEmployees() {
         <label>Роль</label>
         <select id="edit-role">
           <option value="">— не менять —</option>
-          <option value="supervisor">Старший смены</option>
+          <option value="crm_lead">Старший участка CRM</option>
+          <option value="prod_lead">Старший участка производства</option>
           <option value="order_manager">CRM-менеджер</option>
           <option value="executor">Исполнитель</option>
           <option value="admin">Админ</option>
@@ -1174,7 +1280,8 @@ async function renderEmployees() {
       <label>Роль</label>
       <select id="emp-role">
         <option value="executor">Исполнитель</option>
-        <option value="supervisor">Старший смены</option>
+        <option value="crm_lead">Старший участка CRM</option>
+          <option value="prod_lead">Старший участка производства</option>
         <option value="order_manager">CRM-менеджер</option>
         <option value="admin">Админ</option>
       </select>
@@ -2424,3 +2531,29 @@ window.loadTgStatus = async () => {
 };
 
 
+
+window.showOrderRoute = async function (id) {
+  try {
+    const r = await api("/orders/" + id + "/route");
+    alert(
+      "Маршрут заказа " + r.order_id + "\n\n" +
+      "Создал: " + (r.created_by_name || "—") + " (" + (r.created_by || "—") + ")\n" +
+      "Исполнитель: " + (r.executor_name || "—") + " (" + (r.executor_id || "—") + ")\n" +
+      "Статус: " + (r.status_label || r.status)
+    );
+  } catch (e) { toast(e.message, true); }
+};
+window.ordCancel = async function (id) {
+  if (!confirm("Отменить заказ " + id + "?")) return;
+  try {
+    toast((await api("/orders/" + id + "/cancel", { method: "POST" })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};
+window.ordConfirmComplete = async function (id) {
+  if (!confirm("Подтвердить завершение " + id + "?")) return;
+  try {
+    toast((await api("/orders/" + id + "/confirm-complete", { method: "POST" })).message);
+    render();
+  } catch (e) { toast(e.message, true); }
+};

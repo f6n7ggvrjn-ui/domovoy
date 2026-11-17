@@ -1,4 +1,20 @@
 
+def migrate_supervisor_to_prod_lead():
+    """Старых старших смены переводим в старших производства."""
+    try:
+        db = next(get_db())
+        try:
+            rows = db.query(User).filter(User.role == "supervisor").all()
+            for u in rows:
+                u.role = "prod_lead"
+            if rows:
+                db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
 from fastapi import Request, FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -400,7 +416,7 @@ def next_employee_id(db: Session = Depends(get_db), user: User = Depends(require
     return {"id": f"us{n:06d}"}
 
 @app.get("/api/employees")
-def list_employees(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def list_employees(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     q = db.query(User).order_by(User.id)
     return [
         {"id": u.id, "full_name": u.full_name, "role": u.role,
@@ -427,9 +443,9 @@ def search_employee(q: str, db: Session = Depends(get_db), user: User = Depends(
 
 @app.post("/api/employees")
 def create_employee(data: EmployeeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    if data.role not in ("executor", "cleaner", "handyman", "admin", "supervisor", "warehouse", "order_manager"):
-        raise HTTPException(400, "Роль: supervisor / order_manager / executor / admin")
-    role_norm = "executor" if data.role in ("cleaner", "handyman", "executor") else data.role
+    if data.role not in ("executor", "cleaner", "handyman", "admin", "crm_lead", "prod_lead", "warehouse", "order_manager"):
+        raise HTTPException(400, "Роль: crm_lead / prod_lead / order_manager / executor / admin / warehouse")
+    role_norm = "executor" if data.role in ("cleaner", "handyman", "executor") else ("prod_lead" if data.role == "supervisor" else data.role)
     if data.id and data.id.strip():
         nid = normalize(data.id).lower()
         if not is_user(nid):
@@ -595,7 +611,7 @@ def delete_cell(code: str, db: Session = Depends(get_db), user: User = Depends(r
 
 # ---------- assembly board ----------
 @app.get("/api/assembly/board")
-def assembly_board(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def assembly_board(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     rows = db.query(Order).filter(
         Order.status.in_(["awaiting_assembly", "assembling", "assembling_late", "ready", "issued", "completion_pending"])
     ).all()
@@ -648,7 +664,7 @@ def get_or_create_bag(db: Session, bag_id: str, user_id: str = None) -> "Bag":
 
 # ---------- assembly ----------
 @app.post("/api/assembly/start")
-def assembly_start(data: AssemblyStartIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def assembly_start(data: AssemblyStartIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.bag_id).lower()
     if not is_bag(bag_id):
         raise HTTPException(400, "Неверный код сумки. Формат: sumka + 5 цифр")
@@ -685,7 +701,7 @@ def assembly_start(data: AssemblyStartIn, db: Session = Depends(get_db), user: U
     }
 
 @app.post("/api/assembly/add-item")
-def assembly_add_item(data: AssemblyItemIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def assembly_add_item(data: AssemblyItemIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.bag_id).lower()
     eq_id = normalize(data.equipment_id).lower()
     if not is_equipment(eq_id):
@@ -720,7 +736,7 @@ def assembly_add_item(data: AssemblyItemIn, db: Session = Depends(get_db), user:
             "is_late": bool(order.is_late) if order else False}
 
 @app.post("/api/assembly/finish")
-def assembly_finish(data: AssemblyFinishIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def assembly_finish(data: AssemblyFinishIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.bag_id).lower()
     bag = db.query(Bag).filter(Bag.id == bag_id).first()
     if not bag or bag.status != "assembling":
@@ -745,7 +761,7 @@ def assembly_finish(data: AssemblyFinishIn, db: Session = Depends(get_db), user:
 
 # ---------- issue ----------
 @app.post("/api/issue")
-def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     exec_id = normalize(data.executor_id).lower()
     bag_id = normalize(data.bag_id).lower()
     if not is_user(exec_id):
@@ -786,7 +802,7 @@ def issue_bag(data: IssueIn, db: Session = Depends(get_db), user: User = Depends
 
 # ---------- unpack ----------
 @app.post("/api/unpack/start")
-def unpack_start(data: ScanIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def unpack_start(data: ScanIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.code).lower()
     if not is_bag(bag_id):
         raise HTTPException(400, "Неверный код сумки")
@@ -804,7 +820,7 @@ def unpack_start(data: ScanIn, db: Session = Depends(get_db), user: User = Depen
             "message": "Сканируйте оборудование, затем ячейку"}
 
 @app.post("/api/unpack/item")
-def unpack_item(data: UnpackItemIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def unpack_item(data: UnpackItemIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.bag_id).lower()
     eq_id = normalize(data.equipment_id).lower()
     cell_code = normalize(data.cell_code)
@@ -848,7 +864,7 @@ def unpack_item(data: UnpackItemIn, db: Session = Depends(get_db), user: User = 
             "message": "Сумка разобрана и свободна" if bag_empty else "Размещено"}
 
 @app.post("/api/unpack/damage")
-def unpack_damage(data: DamageIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def unpack_damage(data: DamageIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     if not is_problem_zone(data.zone_code):
         raise HTTPException(400, f"Отсканируйте зону {PROBLEM_ZONE}")
     eq_id = normalize(data.equipment_id).lower()
@@ -885,7 +901,7 @@ def unpack_damage(data: DamageIn, db: Session = Depends(get_db), user: User = De
     return {"ok": True, "message": f"{eq.id} → повреждённые"}
 
 @app.post("/api/unpack/declare-empty")
-def declare_empty(data: ScanIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def declare_empty(data: ScanIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.code).lower()
     bag = db.query(Bag).filter(Bag.id == bag_id).first()
     if not bag:
@@ -916,7 +932,7 @@ def declare_empty(data: ScanIn, db: Session = Depends(get_db), user: User = Depe
     }
 
 @app.post("/api/unpack/start-investigation")
-def start_investigation(data: ScanIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def start_investigation(data: ScanIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.code).lower()
     bag = db.query(Bag).filter(Bag.id == bag_id).first()
     if not bag:
@@ -984,7 +1000,7 @@ def add_ean(data: EanIn, db: Session = Depends(get_db), user: User = Depends(req
     return {"ean": t.ean, "name": t.name}
 
 @app.get("/api/equipment-types")
-def list_eans(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def list_eans(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     result = []
     for t in db.query(EquipmentType).all():
         units = db.query(Equipment).filter(Equipment.ean == t.ean, Equipment.status != "written_off").all()
@@ -1012,7 +1028,7 @@ def delete_ean(ean: str, db: Session = Depends(get_db), user: User = Depends(req
     return {"ok": True}
 
 @app.post("/api/receive")
-def receive_unit(data: ReceiveIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def receive_unit(data: ReceiveIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     ean = normalize(data.ean)
     eq_id = normalize(data.equipment_id).lower()
     if not is_equipment(eq_id):
@@ -1043,7 +1059,7 @@ def receive_unit(data: ReceiveIn, db: Session = Depends(get_db), user: User = De
     return {"ok": True, "equipment_id": eq.id, "name": eq.name, "message": msg}
 
 @app.post("/api/receive/place")
-def receive_place(data: PlaceIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def receive_place(data: PlaceIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     eq_id = normalize(data.equipment_id).lower()
     cell_code = normalize(data.cell_code)
     if not is_cell(cell_code):
@@ -1060,7 +1076,7 @@ def receive_place(data: PlaceIn, db: Session = Depends(get_db), user: User = Dep
 
 # ---------- missing / writeoff ----------
 @app.get("/api/missing")
-def list_missing(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def list_missing(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "crm_lead", "supervisor"))):
     rows = db.query(MissingReport).filter(MissingReport.status == "open").order_by(MissingReport.created_at.desc()).all()
     result = []
     for r in rows:
@@ -1278,7 +1294,7 @@ def _next_order_id(db: Session) -> str:
     return f"ORD{n:05d}"
 
 @app.post("/api/orders")
-def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager", "supervisor"))):
+def create_order(data: OrderCreateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "order_manager"))):
     """Создание заказа. Менеджер — без назначения исполнителя; админ/старший могут назначить."""
     if not data.address or not data.address.strip():
         raise HTTPException(400, "Укажите адрес")
@@ -1416,7 +1432,7 @@ def request_complete(order_id: str, db: Session = Depends(get_db), user: User = 
     return {"ok": True, "message": "Запрос на завершение отправлен админу"}
 
 @app.post("/api/orders/{order_id}/confirm-complete")
-def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor"))):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
@@ -1432,7 +1448,7 @@ def confirm_complete(order_id: str, db: Session = Depends(get_db), user: User = 
 
 
 @app.post("/api/orders/{order_id}/cancel")
-def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "crm_lead"))):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
@@ -1467,8 +1483,29 @@ def cancel_order(order_id: str, db: Session = Depends(get_db), user: User = Depe
     db.commit()
     return {"ok": True, "message": f"Заказ {order.id} отменён"}
 
+
+@app.get("/api/orders/{order_id}/route")
+def order_route(order_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Заказ не найден")
+    creator = db.query(User).filter(User.id == order.created_by).first() if order.created_by else None
+    executor = db.query(User).filter(User.id == order.executor_id).first() if order.executor_id else None
+    return {
+        "order_id": order.id,
+        "address": order.address,
+        "status": order.status,
+        "status_label": ORDER_LABELS.get(order.status, order.status),
+        "created_by": order.created_by,
+        "created_by_name": creator.full_name if creator else None,
+        "executor_id": order.executor_id,
+        "executor_name": executor.full_name if executor else None,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "completed_at": order.completed_at.isoformat() if getattr(order, "completed_at", None) else None,
+    }
+
 @app.post("/api/orders/{order_id}/reassign")
-def reassign_order(order_id: str, data: ReassignIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def reassign_order(order_id: str, data: ReassignIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor"))):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "Не найден")
@@ -1485,6 +1522,38 @@ def reassign_order(order_id: str, data: ReassignIn, db: Session = Depends(get_db
     log_op(db, "reassign", user.id, order_id=order.id, comment=f"{old}->{eid}")
     db.commit()
     return {"ok": True, "message": f"Исполнитель: {ex.full_name}"}
+
+@app.get("/api/orders/done-today")
+def orders_done_today(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Выполненные заказы за текущий день (Екатеринбург)."""
+    try:
+        start = now_app().replace(hour=0, minute=0, second=0, microsecond=0)
+        end = now_app().replace(hour=23, minute=59, second=59, microsecond=999999)
+    except Exception:
+        from datetime import datetime as _dt
+        start = _dt.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        end = _dt.utcnow().replace(hour=23, minute=59, second=59)
+    rows = db.query(Order).filter(
+        Order.status == "done",
+        Order.completed_at != None,
+        Order.completed_at >= start,
+        Order.completed_at <= end,
+    ).order_by(Order.completed_at.desc()).all()
+    out = []
+    for o in rows:
+        cr = db.query(User).filter(User.id == o.created_by).first() if o.created_by else None
+        ex = db.query(User).filter(User.id == o.executor_id).first() if o.executor_id else None
+        out.append({
+            "id": o.id, "address": o.address, "status": o.status,
+            "status_label": ORDER_LABELS.get(o.status, o.status),
+            "payment_amount": getattr(o, "payment_amount", None),
+            "created_by": o.created_by,
+            "created_by_name": cr.full_name if cr else None,
+            "executor_id": o.executor_id,
+            "executor_name": ex.full_name if ex else None,
+            "completed_at": o.completed_at.isoformat() if o.completed_at else None,
+        })
+    return out
 
 @app.get("/api/orders")
 def list_orders(scope: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
@@ -1561,7 +1630,7 @@ def order_history(order_id: str, db: Session = Depends(get_db), user: User = Dep
              "bag_id": o.bag_id, "equipment_id": o.equipment_id} for o in ops]
 
 @app.get("/api/transfer-points")
-def list_tp(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def list_tp(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     return [{"code": t.code, "name": t.name} for t in db.query(TransferPoint).order_by(TransferPoint.code).all()]
 
 @app.post("/api/transfer-points")
@@ -1595,7 +1664,7 @@ def del_tp(code: str, db: Session = Depends(get_db), user: User = Depends(requir
     return {"ok": True}
 
 @app.post("/api/bags/return")
-def return_bag(data: ReturnBagIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def return_bag(data: ReturnBagIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     bag_id = normalize(data.bag_id).lower()
     if not is_bag(bag_id):
         raise HTTPException(400, "Неверный код сумки")
@@ -1614,7 +1683,7 @@ def return_bag(data: ReturnBagIn, db: Session = Depends(get_db), user: User = De
 
 
 @app.get("/api/bags")
-def list_bags(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def list_bags(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     labels = {
         "free": "Свободна",
         "assembling": "Собирается",
@@ -1791,14 +1860,14 @@ def pwa_icon_apple():
 
 
 @app.get("/api/tsd/signals")
-def tsd_signals(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def tsd_signals(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     """Новые заказы на сборку — для звука на ТСД (в т.ч. от менеджера)."""
     orders = db.query(Order).filter(Order.status == "awaiting_assembly", Order.signal_sent == True).order_by(Order.created_at.desc()).limit(20).all()
     return [{"order_id": o.id, "address": o.address, "cutoff_minutes": o.cutoff_minutes,
              "executor_id": o.executor_id, "beep": True} for o in orders]
 
 @app.get("/api/equipment")
-def list_equipment(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def list_equipment(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     return [{"id": e.id, "name": e.name, "status": e.status, "cell_code": e.cell_code,
              "bag_id": e.bag_id, "ean": e.ean, "last_user_1": e.last_user_1, "last_user_2": e.last_user_2}
             for e in db.query(Equipment).order_by(Equipment.id).all()]
@@ -1998,23 +2067,33 @@ def lookup(code: str, db: Session = Depends(get_db), user: User = Depends(get_cu
             order = db.query(Order).filter(Order.id.ilike(oid)).first()
         if order:
             bag = db.query(Bag).filter(Bag.id == order.bag_id).first() if order.bag_id else None
+            creator = db.query(User).filter(User.id == order.created_by).first() if order.created_by else None
+            executor = db.query(User).filter(User.id == order.executor_id).first() if order.executor_id else None
+            left = order_cutoff_left(order)
             result.update({
                 "kind": "order",
-                "title": order.address,
+                "title": f"Заказ {order.id}",
                 "status": ORDER_LABELS.get(order.status, order.status),
                 "location": (f"сумка {order.bag_id}" if order.bag_id else "сумка не назначена")
                     + (f", исполнитель {order.executor_id}" if order.executor_id else ""),
                 "details": {
-                    "id": order.id,
-                    "client_name": order.client_name,
-                    "object_info": order.object_info,
+                    "order_id": order.id,
+                    "address": order.address,
+                    "object_info": getattr(order, "object_info", None),
                     "bag_id": order.bag_id,
-                    "bag_status": bag.status if bag else None,
+                    "cutoff_left": left,
+                    "cutoff_minutes": order.cutoff_minutes,
+                    "scheduled_at": order.scheduled_at.isoformat() if order.scheduled_at else None,
+                    "created_by": order.created_by,
+                    "created_by_name": creator.full_name if creator else None,
                     "executor_id": order.executor_id,
-                    "is_late": bool(order.is_late),
+                    "executor_name": executor.full_name if executor else None,
+                    "status_label": ORDER_LABELS.get(order.status, order.status),
+                    "payment_amount": getattr(order, "payment_amount", None),
                 },
             })
             return result
+
 
     raise HTTPException(404, "Код не распознан. Сканируйте dd… / sumka… / DY… / us… / EAN / TP… / ORD…")
 
@@ -2124,7 +2203,7 @@ def shift_today(warehouse_code: str, db: Session = Depends(get_db), user: User =
     return result
 
 @app.post("/api/shift/mark")
-def shift_mark(data: ShiftMarkIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def shift_mark(data: ShiftMarkIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "crm_lead", "prod_lead", "supervisor"))):
     uid = normalize(data.user_id).lower()
     wh = normalize(data.warehouse_code)
     if not is_warehouse_code(wh):
@@ -2132,6 +2211,14 @@ def shift_mark(data: ShiftMarkIn, db: Session = Depends(get_db), user: User = De
     u = db.query(User).filter(User.id == uid).first()
     if not u or u.status != "active":
         raise HTTPException(404, "Сотрудник не найден или неактивен")
+
+    # CRM lead — только менеджеров; prod_lead — исполнителей и склад
+    if user.role == "crm_lead":
+        if u.role != "order_manager":
+            raise HTTPException(403, "Старший CRM отмечает только менеджеров")
+    if user.role in ("prod_lead", "supervisor"):
+        if u.role not in ("executor", "cleaner", "handyman", "warehouse", "prod_lead"):
+            raise HTTPException(403, "Старший производства отмечает исполнителей и склад")
     today = _shift_today_str()
     exists = db.query(ShiftEntry).filter(
         ShiftEntry.warehouse_code == wh, ShiftEntry.user_id == uid, ShiftEntry.shift_date == today
@@ -2144,7 +2231,7 @@ def shift_mark(data: ShiftMarkIn, db: Session = Depends(get_db), user: User = De
     return {"ok": True, "message": f"{u.full_name} на смене", "user_id": uid, "full_name": u.full_name}
 
 @app.delete("/api/shift/mark")
-def shift_unmark(user_id: str, warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def shift_unmark(user_id: str, warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "crm_lead", "prod_lead", "supervisor"))):
     uid = normalize(user_id).lower()
     wh = normalize(warehouse_code)
     today = _shift_today_str()
@@ -2180,7 +2267,7 @@ SHIPMENT_LABELS = {
 }
 
 @app.get("/api/logistics/forming")
-def logistics_forming(warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def logistics_forming(warehouse_code: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     wh = normalize(warehouse_code)
     rows = db.query(Shipment).filter(
         Shipment.from_warehouse == wh, Shipment.status == "forming"
@@ -2196,7 +2283,7 @@ def logistics_forming(warehouse_code: str, db: Session = Depends(get_db), user: 
     return result
 
 @app.get("/api/logistics/history")
-def logistics_history(warehouse_code: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def logistics_history(warehouse_code: Optional[str] = None, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "crm_lead", "supervisor"))):
     # 3 months
     since = datetime.utcnow() - timedelta(days=90)
     q = db.query(Shipment).filter(Shipment.created_at >= since).order_by(Shipment.created_at.desc())
@@ -2271,7 +2358,7 @@ def create_shipment(data: ShipmentCreateIn, db: Session = Depends(get_db), user:
     return {"ok": True, "id": sid, "status": "forming", "message": f"Поставка {sid} создана, ожидает формирования"}
 
 @app.post("/api/logistics/pack")
-def pack_item(data: ShipmentPackIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def pack_item(data: ShipmentPackIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     sid = normalize(data.shipment_id)
     eq_id = normalize(data.equipment_id).lower()
     if not is_shipment_id(sid):
@@ -2322,7 +2409,7 @@ def send_shipment(data: ShipmentActionIn, db: Session = Depends(get_db), user: U
     return {"ok": True, "message": f"Поставка {sid} отправлена ({cnt} ед.)", "status": "sent"}
 
 @app.post("/api/logistics/start-receive")
-def start_receive_shipment(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def start_receive_shipment(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     sid = normalize(data.shipment_id)
     if not is_shipment_id(sid):
         raise HTTPException(400, "Номер поставки: 11 цифр")
@@ -2342,7 +2429,7 @@ def start_receive_shipment(data: ShipmentActionIn, db: Session = Depends(get_db)
     }
 
 @app.post("/api/logistics/receive-item")
-def receive_shipment_item(data: ShipmentReceiveItemIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor", "warehouse"))):
+def receive_shipment_item(data: ShipmentReceiveItemIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
     sid = normalize(data.shipment_id)
     eq_id = normalize(data.equipment_id).lower()
     cell = normalize(data.cell_code)
@@ -2372,7 +2459,7 @@ def receive_shipment_item(data: ShipmentReceiveItemIn, db: Session = Depends(get
     return {"ok": True, "message": f"{item.name} → {cell}", "pending_count": pending}
 
 @app.post("/api/logistics/finish-receive")
-def finish_receive(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "supervisor"))):
+def finish_receive(data: ShipmentActionIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "crm_lead", "supervisor"))):
     sid = normalize(data.shipment_id)
     s = db.query(Shipment).filter(Shipment.id == sid).first()
     if not s or s.status != "receiving":
@@ -2772,6 +2859,13 @@ def index():
         return FileResponse(alt)
     return HTMLResponse("<h1>Домовой</h1><p>Frontend not found</p>")
 
+@app.get("/logo-domovoy.jpg")
+def logo_jpg():
+    for p in [os.path.join(FRONTEND, "logo-domovoy.jpg"), os.path.join(_here, "logo-domovoy.jpg")]:
+        if os.path.isfile(p):
+            return FileResponse(p)
+    raise HTTPException(404)
+
 @app.get("/app.js")
 def app_js():
     for p in [os.path.join(FRONTEND, "app.js"), os.path.join(_here, "app.js")]:
@@ -2944,7 +3038,7 @@ def finance_payout_one(user_id: str, db: Session = Depends(get_db), user: User =
 
 
 @app.get("/api/admin/dashboard")
-def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "crm_lead", "prod_lead", "supervisor"))), user: User = Depends(require_roles("admin"))):
     """Главная админа: сотрудники, выплаты, заказы, рейтинги."""
     ensure_month_rollover(db)
     mk = _month_key()
@@ -3177,3 +3271,5 @@ def finance_export_csv(db: Session = Depends(get_db), user: User = Depends(requi
     )
 
 
+
+migrate_supervisor_to_prod_lead()

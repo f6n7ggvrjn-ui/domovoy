@@ -17,13 +17,26 @@ security = HTTPBearer()
 
 ROLE_LABELS = {
     "admin": "Админ",
-    "supervisor": "Старший смены",
+    "crm_lead": "Старший участка CRM",
+    "prod_lead": "Старший участка производства",
+    "supervisor": "Старший участка производства",  # legacy → prod_lead
     "warehouse": "Склад",
     "order_manager": "CRM-менеджер",
     "executor": "Исполнитель",
     "cleaner": "Исполнитель",
     "handyman": "Исполнитель",
 }
+
+# роли для складских операций (сборка, выдача, …)
+WAREHOUSE_OPS_ROLES = ("admin", "prod_lead", "supervisor", "warehouse")
+# назначение исполнителя
+ASSIGN_ROLES = ("admin", "prod_lead", "supervisor")
+# подтверждение завершения
+COMPLETE_ROLES = ("admin", "prod_lead", "supervisor")
+# отмена заказа
+CANCEL_ROLES = ("admin", "crm_lead")
+# смена: кто кого отмечает — в endpoints
+
 
 def hash_password(p: str) -> str:
     return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
