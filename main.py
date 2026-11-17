@@ -172,6 +172,9 @@ class EmployeeUpdateIn(BaseModel):
 class BlockIn(BaseModel):
     reason: str
 
+class RoleIn(BaseModel):
+    role: str
+
 class PasswordChangeIn(BaseModel):
     old_password: Optional[str] = None
     new_password: str
@@ -479,10 +482,15 @@ def update_employee(emp_id: str, data: EmployeeUpdateIn, db: Session = Depends(g
     if data.birth_date is not None and data.birth_date != u.birth_date:
         log_user_change(db, u.id, user.id, "birth_date", u.birth_date, data.birth_date)
         u.birth_date = data.birth_date
-    if data.role is not None and data.role in ("warehouse", "executor", "cleaner", "handyman", "admin", "supervisor", "order_manager") and data.role != u.role:
-        new_role = "executor" if data.role in ("cleaner", "handyman", "executor") else data.role
-        log_user_change(db, u.id, user.id, "role", u.role, new_role)
-        u.role = new_role
+    if data.role is not None and str(data.role).strip() != "":
+        raw_role = str(data.role).strip()
+        allowed = ("warehouse", "executor", "cleaner", "handyman", "admin", "supervisor", "order_manager", "crm_lead", "prod_lead")
+        if raw_role not in allowed:
+            raise HTTPException(400, "Неизвестная роль: " + raw_role)
+        new_role = "executor" if raw_role in ("cleaner", "handyman", "executor") else ("prod_lead" if raw_role == "supervisor" else raw_role)
+        if new_role != u.role:
+            log_user_change(db, u.id, user.id, "role", u.role, new_role)
+            u.role = new_role
     if data.status is not None and data.status in ("active", "blocked", "fired") and data.status != u.status:
         log_user_change(db, u.id, user.id, "status", u.status, data.status)
         u.status = data.status
@@ -495,7 +503,39 @@ def update_employee(emp_id: str, data: EmployeeUpdateIn, db: Session = Depends(g
         log_user_change(db, u.id, user.id, "password", "***", "***")
         u.password_hash = hash_password(data.password)
     db.commit()
-    return {"ok": True, "id": u.id}
+    db.refresh(u)
+    return {
+        "ok": True,
+        "id": u.id,
+        "full_name": u.full_name,
+        "role": u.role,
+        "role_label": ROLE_LABELS.get(u.role, u.role),
+        "status": u.status,
+    }
+
+@app.post("/api/employees/{emp_id}/set-role")
+def set_employee_role(emp_id: str, data: RoleIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Явная смена роли — чтобы не терялась в общем PATCH."""
+    u = db.query(User).filter(User.id == emp_id).first()
+    if not u:
+        raise HTTPException(404, "Сотрудник не найден")
+    raw_role = str(data.role or "").strip()
+    allowed = ("warehouse", "executor", "cleaner", "handyman", "admin", "supervisor", "order_manager", "crm_lead", "prod_lead")
+    if raw_role not in allowed:
+        raise HTTPException(400, "Неизвестная роль: " + raw_role)
+    new_role = "executor" if raw_role in ("cleaner", "handyman", "executor") else ("prod_lead" if raw_role == "supervisor" else raw_role)
+    old = u.role
+    u.role = new_role
+    log_user_change(db, u.id, user.id, "role", old, new_role)
+    db.commit()
+    db.refresh(u)
+    return {
+        "ok": True,
+        "id": u.id,
+        "role": u.role,
+        "role_label": ROLE_LABELS.get(u.role, u.role),
+        "message": f"Роль: {ROLE_LABELS.get(u.role, u.role)}",
+    }
 
 @app.post("/api/employees/{emp_id}/block")
 def block_employee(emp_id: str, data: BlockIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):

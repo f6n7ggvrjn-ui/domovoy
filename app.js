@@ -1145,7 +1145,7 @@ async function renderOrdersAdmin() {
       <label>Информация по объекту</label><input id="ord-info" placeholder="домофон, этаж, парковка…" />
       <label>Тип уборки</label><input id="ord-type" />
       ${canAssign ? `<label>Исполнитель</label>
-      <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>` : `<p style="color:var(--muted);font-size:0.9rem;margin:0.5rem 0">Исполнителя назначает админ или старший смены</p>`}
+      <select id="ord-exec"><option value="">—</option>${emps.map(e => `<option value="${e.id}">${e.full_name}</option>`).join("")}</select>` : `<p style="color:var(--muted);font-size:0.9rem;margin:0.5rem 0">Исполнителя назначает админ или старший участка производства</p>`}
       <label>Время заказа *</label>
       <input id="ord-time" type="datetime-local" />
       <label>Сумма заказа (₽)${user.role === "admin" ? "" : " *"}</label>
@@ -1165,10 +1165,10 @@ async function renderOrdersAdmin() {
           <td class="cutoff ${o.cutoff_left != null && o.cutoff_left < 0 ? "urgent" : ""}">${fmtCutoff(o)}</td>
           <td>${o.executor_id || "—"}</td>
           <td style="white-space:nowrap">
-            ${o.status === "new" ? `<button class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
-            ${o.status === "completion_pending" && user.role === "admin" ? `<button class="btn btn-accent btn-sm" onclick="ordConfirm('${o.id}')">Подтвердить</button>` : ""}
-            ${canAssign && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}${(user.role==="admin"||user.role==="crm_lead") && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}${user.role==="admin"||user.role==="prod_lead"||user.role==="supervisor" ? `<button class="btn btn-ghost btn-sm" onclick="ordConfirmComplete('${o.id}')">Подтвердить</button>` : ""}
-            ${user.role === "admin" && !["done","cancelled"].includes(o.status) ? `<button class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}
+            ${o.status === "new" ? `<button type="button" class="btn btn-primary btn-sm" onclick="ordSend('${o.id}')">На сборку</button>` : ""}
+            ${canAssign && !["done","cancelled"].includes(o.status) ? `<button type="button" class="btn btn-ghost btn-sm" onclick="ordReassign('${o.id}')">Сменить исп.</button>` : ""}
+            ${o.status === "completion_pending" && (user.role === "admin" || user.role === "prod_lead" || user.role === "supervisor") ? `<button type="button" class="btn btn-accent btn-sm" onclick="ordConfirmComplete('${o.id}')">Подтвердить завершение</button>` : ""}
+            ${(user.role === "admin" || user.role === "crm_lead") && !["done","cancelled"].includes(o.status) ? `<button type="button" class="btn btn-danger btn-sm" onclick="ordCancel('${o.id}')">Отменить</button>` : ""}
           </td>
         </tr>`).join("")}
       </tbody></table></div>`;
@@ -1217,6 +1217,7 @@ window.ordConfirm = async (id) => {
   try { toast((await api("/orders/" + id + "/confirm-complete", { method: "POST" })).message); render(); }
   catch (e) { toast(e.message, true); }
 };
+window.ordConfirmComplete = window.ordConfirm;
 window.ordReassign = async (id) => {
   const eid = prompt("ID нового исполнителя (us000003):");
   if (!eid) return;
@@ -1240,11 +1241,12 @@ async function renderEmployees() {
         <label>Роль</label>
         <select id="edit-role">
           <option value="">— не менять —</option>
-          <option value="crm_lead">Старший участка CRM</option>
-          <option value="prod_lead">Старший участка производства</option>
-          <option value="order_manager">CRM-менеджер</option>
-          <option value="executor">Исполнитель</option>
-          <option value="admin">Админ</option>
+        <option value="executor">Исполнитель</option>
+        <option value="crm_lead">Старший участка CRM</option>
+        <option value="prod_lead">Старший участка производства</option>
+        <option value="order_manager">CRM-менеджер</option>
+        <option value="warehouse">Склад</option>
+        <option value="admin">Админ</option>
         </select>
         <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
           <button type="button" class="btn btn-ghost btn-block" onclick="empEditCancel()">Отмена</button>
@@ -1281,8 +1283,9 @@ async function renderEmployees() {
       <select id="emp-role">
         <option value="executor">Исполнитель</option>
         <option value="crm_lead">Старший участка CRM</option>
-          <option value="prod_lead">Старший участка производства</option>
+        <option value="prod_lead">Старший участка производства</option>
         <option value="order_manager">CRM-менеджер</option>
+        <option value="warehouse">Склад</option>
         <option value="admin">Админ</option>
       </select>
       <button type="button" class="btn btn-primary btn-block" onclick="empSave()">Сохранить</button>
@@ -1339,16 +1342,23 @@ window.empEditSave = async (id) => {
     const passEl = document.getElementById("edit-pass");
     const roleEl = document.getElementById("edit-role");
     if (!nameEl) { toast("Форма не найдена", true); return; }
-    const body = { full_name: nameEl.value.trim() };
-    if (!body.full_name) { toast("Укажите ФИО", true); return; }
+    const full_name = nameEl.value.trim();
+    if (!full_name) { toast("Укажите ФИО", true); return; }
+    const role = roleEl ? roleEl.value.trim() : "";
+    if (!role) { toast("Выберите роль в списке", true); return; }
+    const body = { full_name: full_name };
     const pwd = passEl ? passEl.value.trim() : "";
-    const role = roleEl ? roleEl.value : "";
     if (pwd) body.password = pwd;
-    if (role) body.role = role;
+    // 1) имя / пароль
     await api("/employees/" + id, { method: "PATCH", body: JSON.stringify(body) });
+    // 2) роль отдельным запросом — надёжнее
+    const rr = await api("/employees/" + id + "/set-role", {
+      method: "POST",
+      body: JSON.stringify({ role: role }),
+    });
     window._empEditId = null;
     window._empEditName = "";
-    toast("Сохранено");
+    toast(rr.message || ("Роль: " + (rr.role_label || role)));
     render();
   } catch (e) { toast(e.message || "Ошибка сохранения", true); }
 };
@@ -2541,19 +2551,5 @@ window.showOrderRoute = async function (id) {
       "Исполнитель: " + (r.executor_name || "—") + " (" + (r.executor_id || "—") + ")\n" +
       "Статус: " + (r.status_label || r.status)
     );
-  } catch (e) { toast(e.message, true); }
-};
-window.ordCancel = async function (id) {
-  if (!confirm("Отменить заказ " + id + "?")) return;
-  try {
-    toast((await api("/orders/" + id + "/cancel", { method: "POST" })).message);
-    render();
-  } catch (e) { toast(e.message, true); }
-};
-window.ordConfirmComplete = async function (id) {
-  if (!confirm("Подтвердить завершение " + id + "?")) return;
-  try {
-    toast((await api("/orders/" + id + "/confirm-complete", { method: "POST" })).message);
-    render();
   } catch (e) { toast(e.message, true); }
 };
