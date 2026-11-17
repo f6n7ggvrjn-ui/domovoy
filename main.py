@@ -3038,7 +3038,7 @@ def finance_payout_one(user_id: str, db: Session = Depends(get_db), user: User =
 
 
 @app.get("/api/admin/dashboard")
-def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "crm_lead", "prod_lead", "supervisor"))), user: User = Depends(require_roles("admin"))):
+def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "crm_lead", "prod_lead", "supervisor"))):
     """Главная админа: сотрудники, выплаты, заказы, рейтинги."""
     ensure_month_rollover(db)
     mk = _month_key()
