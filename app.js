@@ -147,7 +147,7 @@ document.getElementById("login-form").onsubmit = async (e) => {
     } catch (_) {}
     page = "home";
     show("app");
-    startSignalPoll();
+    startSignalPoll(); startEmergencyPoll();
   } catch (ex) {
     var msg = (ex && ex.message) ? ex.message : "Ошибка входа";
     if (/Failed to fetch|NetworkError|Network request failed|XHR/i.test(msg)) {
@@ -175,9 +175,16 @@ function navItems() {
       ["shift", "Смена"], ["profile", "Профиль"],
     ];
   }
-  if (user.role === "prod_lead" || user.role === "supervisor" || user.role === "warehouse") {
+  if (user.role === "prod_lead" || user.role === "supervisor") {
     return [
-      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
+      ["home", "Главная"], ["unit", "Участок"], ["lookup", "Объект"], ["orders", "Заказы"], ["orderHistory", "История"],
+      ["shift", "Смена"], ["logistics", "Логистика"], ["board", "Очередь"],
+      ["missing", "Пропажи"], ["profile", "Профиль"],
+    ];
+  }
+  if (user.role === "warehouse") {
+    return [
+      ["home", "Главная"], ["lookup", "Объект"], ["orders", "Заказы"],
       ["shift", "Смена"], ["logistics", "Логистика"], ["board", "Очередь"],
       ["missing", "Пропажи"], ["profile", "Профиль"],
     ];
@@ -211,11 +218,18 @@ window.recoverLayout = recoverLayout;
 
 function render() {
   window.page = page;
-  document.getElementById("user-label").textContent = `${user.full_name} · ${user.role_label || user.role}`;
+  const _ul = document.getElementById("user-label");
+  if (_ul) {
+    const rl = user.role_label || user.role || "";
+    _ul.textContent = (user.full_name || "") + " · " + rl;
+    _ul.title = _ul.textContent;
+  }
+  const _lo = document.getElementById("btn-logout");
+  if (_lo) { _lo.style.display = "inline-flex"; _lo.style.visibility = "visible"; }
   const nav = document.getElementById("nav");
   const items = navItems();
   // подстраницы логистики/склада не в меню — не сбрасывать на главную
-  const subPages = ["logSend", "logForm", "logReceive", "logTrack", "logHistory", "whpick", "settings", "qr", "assemble", "issue", "unpack", "receive", "returnbag", "cells", "bags", "board", "eans", "points", "mgrRating", "exRating", "orderHistory", "profile", "crmReport", "fines", "cabinet"];
+  const subPages = ["unit", "logSend", "logForm", "logReceive", "logTrack", "logHistory", "whpick", "settings", "qr", "assemble", "issue", "unpack", "receive", "returnbag", "cells", "bags", "board", "eans", "points", "mgrRating", "exRating", "orderHistory", "profile", "crmReport", "fines", "cabinet"];
   if (!items.find(i => i[0] === page) && !subPages.includes(page)) page = items[0][0];
   const logisticsSubs = ["logSend", "logForm", "logReceive", "logTrack", "logHistory"];
   nav.innerHTML = items.map(([id, label]) => {
@@ -237,6 +251,7 @@ function render() {
 async function renderPage() {
   switch (page) {
     case "home": return renderHome();
+    case "unit": return renderUnit();
     case "lookup": return renderLookup();
     case "assemble": return renderAssemble();
     case "issue": return renderIssue();
@@ -428,17 +443,75 @@ async function renderOrderHistory() {
       </tbody></table></div>` : "<p style='color:var(--muted)'>Нет завершённых заказов</p>"}`;
 }
 
+
+async function renderUnit() {
+  /* Старший производства: сводка участка (исполнители), без складских кнопок */
+  let d = { executors_active: 0, orders_active: 0, active_orders: [] };
+  let doneToday = [];
+  try { d = await api("/admin/dashboard"); } catch (e) {}
+  try { doneToday = await api("/orders/done-today"); } catch (e) { doneToday = []; }
+  const delayedHtml = await loadDelayedBlock();
+  return `
+    <div class="page-h"><h1>Участок</h1>
+      <span style="color:var(--muted);font-size:0.85rem">${new Date().toLocaleDateString("ru-RU")}</span>
+    </div>
+    ${delayedHtml}
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="label">Исполнители на смене</div>
+        <div class="value">${d.executors_active || 0}</div>
+        <button type="button" class="btn btn-ghost btn-block" style="margin-top:0.5rem" onclick="go('exRating')">Рейтинг исполнителей</button>
+      </div>
+      <div class="stat-card">
+        <div class="label">Активные заказы</div>
+        <div class="value">${d.orders_active || 0}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Выполнено сегодня</div>
+        <div class="value">${(doneToday && doneToday.length) || 0}</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <div class="card-title">Активные заказы</div>
+      ${(d.active_orders && d.active_orders.length) ? `<div class="table-wrap"><table>
+        <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Cut-off</th><th>Исполнитель</th></tr></thead>
+        <tbody>${d.active_orders.map(o => `<tr>
+          <td>${o.id}</td><td>${o.address || ""}</td><td>${o.status_label || o.status}</td>
+          <td class="cutoff">${fmtCutoff(o)}</td>
+          <td>${o.executor_id || "—"}</td>
+        </tr>`).join("")}</tbody></table></div>` : `<p style="color:var(--muted)">Нет активных</p>`}
+    </div>
+    <div class="card">
+      <div class="card-title">Выполненные сегодня</div>
+      ${(doneToday && doneToday.length) ? `<div class="table-wrap"><table>
+        <thead><tr><th>Заказ</th><th>Адрес</th><th>Исполнитель</th></tr></thead>
+        <tbody>${doneToday.map(o => `<tr>
+          <td>${o.id}</td><td>${o.address || ""}</td>
+          <td>${o.executor_name || "—"} ${o.executor_id ? "("+o.executor_id+")" : ""}</td>
+        </tr>`).join("")}</tbody></table></div>` : `<p style="color:var(--muted)">Пока нет</p>`}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.75rem">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="go('orderHistory')">История</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="go('lookup')">Объект</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="go('shift')">Смена</button>
+      <button type="button" class="btn btn-primary btn-sm" onclick="go('home')">К сборке / складу</button>
+    </div>`;
+}
+
 async function renderHome() {
   if (user.role === "admin") {
     let d = {};
     try { d = await api("/admin/dashboard"); } catch (e) {
       return `<div class="page-h"><h1>Главная</h1></div><div class="error">${e.message}</div>`;
     }
+    const delayedHtml = await loadDelayedBlock();
     const fmt = (n) => Number(n || 0).toLocaleString("ru-RU") + " ₽";
     return `
       <div class="page-h"><h1>Главная</h1>
         <span style="color:var(--muted);font-size:0.85rem">${d.month_key || ""}</span>
       </div>
+      ${emergencyAdminCard()}
+      ${delayedHtml}
 
       <div class="card">
         <div class="card-title">Активные сотрудники</div>
@@ -558,10 +631,12 @@ async function renderHome() {
     let doneToday = [];
     try { d = await api("/admin/dashboard"); } catch (e) {}
     try { doneToday = await api("/orders/done-today"); } catch (e) { doneToday = []; }
+    const delayedHtml = await loadDelayedBlock();
     return `
       <div class="page-h"><h1>Участок CRM</h1>
         <span style="color:var(--muted);font-size:0.85rem">${new Date().toLocaleDateString("ru-RU")}</span>
       </div>
+      ${delayedHtml}
       <div class="stat-grid">
         <div class="stat-card">
           <div class="label">Менеджеры на смене</div>
@@ -2226,13 +2301,145 @@ function playBeep() {
 
 let signalTimer = null;
 let signalKnown = null;
+
+async function loadDelayedBlock() {
+  try {
+    const rows = await api("/orders/delayed");
+    if (!rows || !rows.length) {
+      return `<div class="card" style="border-color:var(--warning)">
+        <div class="card-title" style="color:var(--warning)">Задержанные заказы</div>
+        <p style="color:var(--muted);margin:0">Нет заказов с опозданием</p>
+      </div>`;
+    }
+    return `<div class="card" style="border-color:var(--danger)">
+      <div class="card-title" style="color:var(--danger)">Задержанные заказы · ${rows.length}</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Заказ</th><th>Адрес</th><th>Статус</th><th>Опоздание</th><th>Исп.</th></tr></thead>
+        <tbody>${rows.map(o => `<tr>
+          <td><b>${o.id}</b></td>
+          <td>${o.address || "—"}</td>
+          <td>${o.status_label || o.status}</td>
+          <td class="cutoff urgent">${o.late_minutes != null ? o.late_minutes + " мин" : "—"}</td>
+          <td>${o.executor_id || "—"}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </div>`;
+  } catch (e) {
+    return `<div class="card"><div class="card-title">Задержанные заказы</div><p style="color:var(--muted)">${e.message}</p></div>`;
+  }
+}
+
+function emergencyAdminCard() {
+  if (user.role !== "admin") return "";
+  return `<div class="card" style="border:2px solid var(--danger)">
+    <div class="card-title" style="color:var(--danger)">Экстренное оповещение</div>
+    <label>Текст для старших</label>
+    <textarea id="em-text" rows="3" style="width:100%;font-size:16px;padding:0.75rem;border-radius:10px;border:1px solid var(--border);background:var(--bg-input);color:var(--text)" placeholder="Срочно: ..."></textarea>
+    <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap">
+      <button type="button" class="btn btn-danger btn-block" style="flex:1" onclick="sendEmergency()">Готово · отправить</button>
+      <button type="button" class="btn btn-ghost btn-block" style="flex:1" onclick="clearEmergency()">Снять оповещение</button>
+    </div>
+  </div>`;
+}
+window.sendEmergency = async function () {
+  const t = (document.getElementById("em-text") && document.getElementById("em-text").value || "").trim();
+  if (!t) { toast("Введите текст", true); return; }
+  try {
+    const r = await api("/admin/emergency", { method: "POST", body: JSON.stringify({ text: t }) });
+    toast(r.message || "Отправлено");
+  } catch (e) { toast(e.message, true); }
+};
+window.clearEmergency = async function () {
+  try {
+    const r = await api("/admin/emergency", { method: "POST", body: JSON.stringify({ text: "" }) });
+    toast(r.message || "Снято");
+    stopSiren();
+    hideEmergencyBanner();
+  } catch (e) { toast(e.message, true); }
+};
+
+let sirenTimer = null;
+let sirenCtx = null;
+let emergencyAckId = sessionStorage.getItem("dv_em_ack") || "";
+function playSiren() {
+  stopSiren();
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    sirenCtx = ctx;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = "sawtooth";
+    o.connect(g); g.connect(ctx.destination);
+    g.gain.value = 0.18;
+    o.frequency.setValueAtTime(680, ctx.currentTime);
+    o.start();
+    let up = true;
+    sirenTimer = setInterval(function () {
+      try {
+        const f = up ? 980 : 620;
+        o.frequency.setValueAtTime(f, ctx.currentTime);
+        up = !up;
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      } catch (_) {}
+    }, 280);
+    window._sirenOsc = o;
+  } catch (_) {}
+}
+function stopSiren() {
+  if (sirenTimer) { clearInterval(sirenTimer); sirenTimer = null; }
+  try { if (window._sirenOsc) { window._sirenOsc.stop(); window._sirenOsc = null; } } catch (_) {}
+  try { if (sirenCtx) { sirenCtx.close(); sirenCtx = null; } } catch (_) {}
+}
+function hideEmergencyBanner() {
+  const el = document.getElementById("emergency-banner");
+  if (el) el.remove();
+}
+function showEmergencyBanner(text, id) {
+  hideEmergencyBanner();
+  const bar = document.createElement("div");
+  bar.id = "emergency-banner";
+  bar.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#b91c1c;color:#fff;padding:0.85rem 1rem;padding-top:max(0.85rem,env(safe-area-inset-top));display:flex;gap:0.75rem;align-items:center;box-shadow:0 4px 20px rgba(0,0,0,0.45);";
+  bar.innerHTML = '<div style="flex:1;font-weight:800;font-size:1.05rem;line-height:1.35">⚠ ' + String(text || "").replace(/</g, "&lt;") + '</div>' +
+    '<button type="button" id="em-ok" style="flex-shrink:0;background:#fff;color:#b91c1c;font-weight:800;border:none;border-radius:10px;padding:0.65rem 1.1rem;font-size:1rem">OK</button>';
+  document.body.appendChild(bar);
+  document.getElementById("em-ok").onclick = function () {
+    emergencyAckId = id || "";
+    sessionStorage.setItem("dv_em_ack", emergencyAckId);
+    stopSiren();
+    hideEmergencyBanner();
+  };
+  playSiren();
+}
+let emPollTimer = null;
+function startEmergencyPoll() {
+  if (emPollTimer) clearInterval(emPollTimer);
+  const roles = ["admin", "crm_lead", "prod_lead", "supervisor"];
+  if (!user || roles.indexOf(user.role) < 0) return;
+  const tick = async function () {
+    try {
+      const r = await api("/emergency");
+      if (r.active && r.text && r.id && r.id !== emergencyAckId) {
+        if (!document.getElementById("emergency-banner")) showEmergencyBanner(r.text, r.id);
+      } else if (!r.active) {
+        stopSiren();
+        hideEmergencyBanner();
+        emergencyAckId = "";
+        sessionStorage.removeItem("dv_em_ack");
+      }
+    } catch (_) {}
+  };
+  tick();
+  emPollTimer = setInterval(tick, 5000);
+}
+
+
 function startSignalPoll() {
   // отключено: без фона /api/tsd/signals — меньше 429, без звука/вибрации о новых заказах
   if (signalTimer) { clearInterval(signalTimer); signalTimer = null; }
 }
 
 if (token && user) {
-  api("/me").then(u => { user = u; sessionStorage.setItem("dv_user", JSON.stringify(u)); show("app"); startSignalPoll(); }).catch(logout);
+  api("/me").then(u => { user = u; sessionStorage.setItem("dv_user", JSON.stringify(u)); show("app"); startSignalPoll(); startEmergencyPoll(); startEmergencyPoll(); }).catch(logout);
 } else {
   show("login");
 }

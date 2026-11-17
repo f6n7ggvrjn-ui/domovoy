@@ -175,6 +175,9 @@ class BlockIn(BaseModel):
 class RoleIn(BaseModel):
     role: str
 
+class EmergencyIn(BaseModel):
+    text: str = ""
+
 class PasswordChangeIn(BaseModel):
     old_password: Optional[str] = None
     new_password: str
@@ -1201,6 +1204,18 @@ def _rub_split(total: int, pe: int, pm: int, pc: int):
     a_co = total - a_ex - a_mg
     return a_ex, a_mg, a_co
 
+
+def get_setting(db: Session, key: str, default: str = "") -> str:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    return row.value if row and row.value is not None else default
+
+def set_setting(db: Session, key: str, value: str):
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key=key, value=value))
+
 def finance_on_order_create(db: Session, order: Order, creator: User):
     """Менеджеру (создатель CRM) и компании — сразу; исполнителю позже."""
     amount = int(order.payment_amount or 0)
@@ -1898,6 +1913,73 @@ def pwa_icon_apple():
         raise HTTPException(404)
     return FileResponse(p, media_type="image/png")
 
+
+
+@app.get("/api/orders/delayed")
+def orders_delayed(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "crm_lead", "prod_lead", "supervisor"))):
+    """Заказы с зафиксированным опозданием, к которым ещё не приступили / не завершены."""
+    rows = db.query(Order).filter(Order.status.notin_(["done", "cancelled"])).order_by(Order.created_at.asc()).all()
+    out = []
+    for o in rows:
+        left = order_cutoff_left(o)
+        late = bool(o.is_late) or (left is not None and left < 0)
+        if not late:
+            continue
+        # ещё не «в работе у исполнителя» полностью — показываем все активные с опозданием
+        if o.status in ("issued", "completion_pending"):
+            # тоже показываем — задержанные по cut-off
+            pass
+        cr = db.query(User).filter(User.id == o.created_by).first() if o.created_by else None
+        ex = db.query(User).filter(User.id == o.executor_id).first() if o.executor_id else None
+        if left is not None and left < 0:
+            o.is_late = True
+            o.late_minutes = max(o.late_minutes or 0, abs(left))
+        out.append({
+            "id": o.id,
+            "address": o.address,
+            "status": o.status,
+            "status_label": ORDER_LABELS.get(o.status, o.status),
+            "cutoff_left": left,
+            "is_late": True,
+            "late_minutes": o.late_minutes or (abs(left) if left is not None and left < 0 else 0),
+            "bag_id": o.bag_id,
+            "executor_id": o.executor_id,
+            "executor_name": ex.full_name if ex else None,
+            "created_by": o.created_by,
+            "created_by_name": cr.full_name if cr else None,
+            "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
+        })
+    try:
+        db.commit()
+    except Exception:
+        pass
+    return out
+
+@app.get("/api/emergency")
+def get_emergency(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    text = get_setting(db, "emergency_text", "") or ""
+    ts = get_setting(db, "emergency_at", "") or ""
+    eid = get_setting(db, "emergency_id", "") or ""
+    active = bool(text.strip())
+    return {"active": active, "text": text, "at": ts, "id": eid}
+
+@app.post("/api/admin/emergency")
+def set_emergency(data: EmergencyIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    text = str(data.text or "").strip()
+    if not text:
+        # очистка
+        set_setting(db, "emergency_text", "")
+        set_setting(db, "emergency_at", "")
+        set_setting(db, "emergency_id", "")
+        db.commit()
+        return {"ok": True, "message": "Оповещение снято", "active": False}
+    import uuid
+    eid = uuid.uuid4().hex[:12]
+    set_setting(db, "emergency_text", text[:2000])
+    set_setting(db, "emergency_at", now_app().isoformat())
+    set_setting(db, "emergency_id", eid)
+    db.commit()
+    return {"ok": True, "message": "Экстренное оповещение отправлено", "active": True, "id": eid}
 
 @app.get("/api/tsd/signals")
 def tsd_signals(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "prod_lead", "supervisor", "warehouse"))):
