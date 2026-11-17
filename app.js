@@ -2360,35 +2360,114 @@ window.clearEmergency = async function () {
 
 let sirenTimer = null;
 let sirenCtx = null;
+let sirenNodes = [];
 let emergencyAckId = sessionStorage.getItem("dv_em_ack") || "";
-function playSiren() {
-  stopSiren();
+let audioUnlocked = false;
+
+function unlockAudio() {
+  if (audioUnlocked) return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    sirenCtx = ctx;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = "sawtooth";
-    o.connect(g); g.connect(ctx.destination);
-    g.gain.value = 0.18;
-    o.frequency.setValueAtTime(680, ctx.currentTime);
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!sirenCtx || sirenCtx.state === "closed") sirenCtx = new AC();
+    if (sirenCtx.state === "suspended") sirenCtx.resume();
+    // тихий клик — разблокировка iOS/Android
+    const o = sirenCtx.createOscillator();
+    const g = sirenCtx.createGain();
+    g.gain.value = 0.0001;
+    o.connect(g); g.connect(sirenCtx.destination);
     o.start();
-    let up = true;
-    sirenTimer = setInterval(function () {
-      try {
-        const f = up ? 980 : 620;
-        o.frequency.setValueAtTime(f, ctx.currentTime);
-        up = !up;
-        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-      } catch (_) {}
-    }, 280);
-    window._sirenOsc = o;
+    o.stop(sirenCtx.currentTime + 0.03);
+    audioUnlocked = true;
   } catch (_) {}
 }
-function stopSiren() {
+["touchstart", "touchend", "mousedown", "keydown", "click"].forEach(function (ev) {
+  document.addEventListener(ev, unlockAudio, { capture: true, passive: true });
+});
+
+function playSiren() {
+  stopSiren(false);
+  unlockAudio();
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!sirenCtx || sirenCtx.state === "closed") sirenCtx = new AC();
+    const ctx = sirenCtx;
+    const start = function () {
+      // сирена-война: два тона, плавный подъём/спуск
+      const master = ctx.createGain();
+      master.gain.value = 0.22;
+      master.connect(ctx.destination);
+      const o1 = ctx.createOscillator();
+      const o2 = ctx.createOscillator();
+      o1.type = "square";
+      o2.type = "sawtooth";
+      const g2 = ctx.createGain();
+      g2.gain.value = 0.35;
+      o1.connect(master);
+      o2.connect(g2); g2.connect(master);
+      o1.frequency.setValueAtTime(650, ctx.currentTime);
+      o2.frequency.setValueAtTime(980, ctx.currentTime);
+      o1.start();
+      o2.start();
+      sirenNodes = [o1, o2, master];
+      let t0 = ctx.currentTime;
+      const sweep = function () {
+        if (!sirenNodes.length) return;
+        try {
+          const now = ctx.currentTime;
+          // цикл ~1.2 сек: 700→1400→700
+          o1.frequency.cancelScheduledValues(now);
+          o2.frequency.cancelScheduledValues(now);
+          o1.frequency.setValueAtTime(700, now);
+          o1.frequency.linearRampToValueAtTime(1450, now + 0.55);
+          o1.frequency.linearRampToValueAtTime(700, now + 1.1);
+          o2.frequency.setValueAtTime(900, now);
+          o2.frequency.linearRampToValueAtTime(1600, now + 0.55);
+          o2.frequency.linearRampToValueAtTime(900, now + 1.1);
+        } catch (_) {}
+      };
+      sweep();
+      sirenTimer = setInterval(function () {
+        sweep();
+        try { if (navigator.vibrate) navigator.vibrate([300, 120, 300, 120, 300]); } catch (_) {}
+      }, 1100);
+    };
+    if (ctx.state === "suspended") {
+      ctx.resume().then(start).catch(start);
+    } else {
+      start();
+    }
+  } catch (e) {
+    console.warn("siren", e);
+  }
+  // запасной <audio> — иногда проходит там, где WebAudio молчит
+  try {
+    let a = document.getElementById("em-siren-audio");
+    if (!a) {
+      a = document.createElement("audio");
+      a.id = "em-siren-audio";
+      a.loop = true;
+      a.preload = "auto";
+      // короткий data-wav не делаем — используем oscillator; audio как пустышка для unlock
+      document.body.appendChild(a);
+    }
+  } catch (_) {}
+}
+function stopSiren(keepCtx) {
   if (sirenTimer) { clearInterval(sirenTimer); sirenTimer = null; }
-  try { if (window._sirenOsc) { window._sirenOsc.stop(); window._sirenOsc = null; } } catch (_) {}
-  try { if (sirenCtx) { sirenCtx.close(); sirenCtx = null; } } catch (_) {}
+  sirenNodes.forEach(function (n) {
+    try { if (n.stop) n.stop(); } catch (_) {}
+    try { if (n.disconnect) n.disconnect(); } catch (_) {}
+  });
+  sirenNodes = [];
+  if (!keepCtx) {
+    try { if (sirenCtx && sirenCtx.state !== "closed") { /* не закрываем — нужен для повторных */ } } catch (_) {}
+  }
+  try {
+    const a = document.getElementById("em-siren-audio");
+    if (a) { a.pause(); a.currentTime = 0; }
+  } catch (_) {}
 }
 function hideEmergencyBanner() {
   const el = document.getElementById("emergency-banner");
@@ -2400,15 +2479,20 @@ function showEmergencyBanner(text, id) {
   bar.id = "emergency-banner";
   bar.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#b91c1c;color:#fff;padding:0.85rem 1rem;padding-top:max(0.85rem,env(safe-area-inset-top));display:flex;gap:0.75rem;align-items:center;box-shadow:0 4px 20px rgba(0,0,0,0.45);";
   bar.innerHTML = '<div style="flex:1;font-weight:800;font-size:1.05rem;line-height:1.35">⚠ ' + String(text || "").replace(/</g, "&lt;") + '</div>' +
+    '<button type="button" id="em-sound" style="flex-shrink:0;background:#450a0a;color:#fff;font-weight:700;border:1px solid #fff;border-radius:10px;padding:0.55rem 0.75rem;font-size:0.85rem">Звук</button>' +
     '<button type="button" id="em-ok" style="flex-shrink:0;background:#fff;color:#b91c1c;font-weight:800;border:none;border-radius:10px;padding:0.65rem 1.1rem;font-size:1rem">OK</button>';
   document.body.appendChild(bar);
+  const soundBtn = document.getElementById("em-sound");
+  if (soundBtn) soundBtn.onclick = function () { unlockAudio(); playSiren(); };
   document.getElementById("em-ok").onclick = function () {
+    unlockAudio();
     emergencyAckId = id || "";
     sessionStorage.setItem("dv_em_ack", emergencyAckId);
     stopSiren();
     hideEmergencyBanner();
   };
-  playSiren();
+  setTimeout(function () { playSiren(); }, 80);
+  setTimeout(function () { if (!sirenNodes.length) playSiren(); }, 500);
 }
 let emPollTimer = null;
 function startEmergencyPoll() {
